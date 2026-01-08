@@ -827,17 +827,16 @@
     }
 
     function resolveMachineName({ ws, grid, mergeInfo, rh, rMeta, tableKeyCol, rEnd }) {
-      const machineCol = tableKeyCol - 1;
-      if (machineCol < 0) return 'Unknown machine';
+      const machineCol = 0;
       const direct = getVisibleValue(ws, grid, mergeInfo, rh, machineCol);
       if (!isEmptyValue(direct)) return String(direct);
 
-      for (let r = rh; r >= Math.max(0, rMeta - 10); r -= 1) {
+      for (let r = rh - 1; r >= 0; r -= 1) {
         const value = getVisibleValue(ws, grid, mergeInfo, r, machineCol);
         if (!isEmptyValue(value)) return String(value);
       }
 
-      for (let r = rh + 1; r <= Math.min(rEnd, rh + 10); r += 1) {
+      for (let r = rh + 1; r <= rEnd; r += 1) {
         const value = getVisibleValue(ws, grid, mergeInfo, r, machineCol);
         if (!isEmptyValue(value)) return String(value);
       }
