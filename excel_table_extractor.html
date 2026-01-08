@@ -1,0 +1,1213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Excel Graphical Table Extractor</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --danger: #dc2626;
+      --success: #16a34a;
+      --border: #e5e7eb;
+      --shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+      font-family: "Inter", system-ui, -apple-system, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    header {
+      background: linear-gradient(120deg, #1d4ed8, #3b82f6);
+      color: #fff;
+      padding: 28px 20px;
+    }
+
+    header h1 {
+      margin: 0 0 8px;
+      font-size: clamp(1.6rem, 2vw, 2.2rem);
+    }
+
+    header p {
+      margin: 0;
+      max-width: 720px;
+      color: rgba(255, 255, 255, 0.85);
+      font-size: 0.95rem;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(280px, 320px) 1fr;
+      gap: 20px;
+      padding: 20px;
+    }
+
+    @media (max-width: 960px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel {
+      background: var(--panel);
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      border: 1px solid var(--border);
+    }
+
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .button {
+      appearance: none;
+      border: none;
+      border-radius: 999px;
+      padding: 10px 16px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.1s ease, box-shadow 0.1s ease;
+    }
+
+    .button.secondary {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 15px rgba(37, 99, 235, 0.2);
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    select,
+    input[type="file"],
+    input[type="text"] {
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fff;
+      font-size: 0.9rem;
+    }
+
+    .accordion {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      margin-bottom: 12px;
+      background: #fff;
+    }
+
+    details {
+      border-bottom: 1px solid var(--border);
+    }
+
+    details:last-child {
+      border-bottom: none;
+    }
+
+    summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 12px 16px;
+      font-weight: 600;
+      position: relative;
+    }
+
+    summary::-webkit-details-marker {
+      display: none;
+    }
+
+    summary::after {
+      content: "▾";
+      position: absolute;
+      right: 16px;
+      transform: rotate(0deg);
+      transition: transform 0.2s ease;
+    }
+
+    details[open] summary::after {
+      transform: rotate(180deg);
+    }
+
+    details .content {
+      padding: 0 16px 16px;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    .report-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .stat-card {
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+    }
+
+    .stat-card strong {
+      display: block;
+      font-size: 1.2rem;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .table-preview {
+      overflow-x: auto;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+    }
+
+    table {
+      border-collapse: collapse;
+      min-width: 100%;
+      font-size: 0.85rem;
+    }
+
+    th,
+    td {
+      border: 1px solid var(--border);
+      padding: 6px 8px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      background: #f1f5f9;
+      font-weight: 600;
+    }
+
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .card h4 {
+      margin: 0 0 8px;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      border: 1px solid var(--border);
+    }
+
+    .pill.success {
+      color: var(--success);
+      border-color: rgba(22, 163, 74, 0.4);
+      background: rgba(22, 163, 74, 0.08);
+    }
+
+    .pill.warning {
+      color: var(--danger);
+      border-color: rgba(220, 38, 38, 0.3);
+      background: rgba(220, 38, 38, 0.08);
+    }
+
+    .stack {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .progress {
+      height: 8px;
+      background: #e5e7eb;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .progress span {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+      width: 0;
+      transition: width 0.3s ease;
+    }
+
+    .footer-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .linkish {
+      color: var(--accent);
+      text-decoration: underline;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+
+    .small {
+      font-size: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Excel Graphical Table Extractor</h1>
+    <p>Upload a spreadsheet, detect merged-cell graphical tables, and export structured data with full extraction reporting. Runs entirely in your browser.</p>
+  </header>
+
+  <main>
+    <section>
+      <div class="accordion">
+        <details open>
+          <summary>How extraction works</summary>
+          <div class="content">
+            This tool scans each sheet for the Key/Module header row, then resolves merged cells so header labels and machine names are read from their top-left anchors. It identifies header bands, time columns, and data rows, then builds table records and flattened facts.
+          </div>
+        </details>
+        <details>
+          <summary>Known limitations</summary>
+          <div class="content">
+            Formatting-only borders are ignored. Detection relies on text signatures (Key/Module and metadata labels). Merged header labels are resolved via merge anchors, so empty-looking cells still map to their visible text.
+          </div>
+        </details>
+      </div>
+
+      <div class="panel controls">
+        <div class="input-group">
+          <label for="fileInput">Excel file (.xlsx)</label>
+          <input id="fileInput" type="file" accept=".xlsx" />
+        </div>
+        <button class="button" id="runBtn" disabled>Run extraction</button>
+        <div class="progress"><span id="progressBar"></span></div>
+        <div class="footer-actions">
+          <button class="button secondary" id="exportCsvBtn" disabled>Export Facts CSV</button>
+          <button class="button secondary" id="exportJsonBtn" disabled>Export JSON</button>
+          <button class="button secondary" id="exportLogBtn" disabled>Export Log</button>
+        </div>
+        <div class="panel" style="box-shadow:none; border:1px dashed var(--border);">
+          <h3 class="section-title">Filters</h3>
+          <div class="input-group">
+            <label for="filterDepartment">Department</label>
+            <select id="filterDepartment"></select>
+          </div>
+          <div class="input-group">
+            <label for="filterMachine">Machine</label>
+            <select id="filterMachine"></select>
+          </div>
+          <div class="input-group">
+            <label for="filterTimeframe">Timeframe</label>
+            <select id="filterTimeframe"></select>
+          </div>
+          <div class="input-group">
+            <label for="filterUnit">Unit</label>
+            <select id="filterUnit"></select>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel report-grid">
+      <div>
+        <h3 class="section-title">Extraction Summary</h3>
+        <div id="summaryStats" class="stat-grid"></div>
+      </div>
+
+      <div>
+        <h3 class="section-title">Expected-shape sanity check</h3>
+        <p class="muted" id="expectedShape"></p>
+      </div>
+
+      <div>
+        <h3 class="section-title">Pivot summary</h3>
+        <div id="pivotSummary" class="card"></div>
+      </div>
+
+      <div>
+        <h3 class="section-title">Target tables</h3>
+        <div id="tableCards" class="stack"></div>
+      </div>
+
+      <div>
+        <h3 class="section-title">Non-target tables (quarantine)</h3>
+        <div id="quarantineCards" class="stack"></div>
+      </div>
+
+      <div>
+        <h3 class="section-title">Detail view</h3>
+        <div id="detailView" class="card"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      workbook: null,
+      tableRecords: [],
+      facts: [],
+      nonTargetTables: [],
+      extractionLog: [],
+      summary: null,
+      filters: {
+        department: 'All',
+        machine: 'All',
+        timeframe: 'All',
+        unit: 'All'
+      }
+    };
+
+    const fileInput = document.getElementById('fileInput');
+    const runBtn = document.getElementById('runBtn');
+    const exportCsvBtn = document.getElementById('exportCsvBtn');
+    const exportJsonBtn = document.getElementById('exportJsonBtn');
+    const exportLogBtn = document.getElementById('exportLogBtn');
+    const progressBar = document.getElementById('progressBar');
+    const summaryStats = document.getElementById('summaryStats');
+    const pivotSummary = document.getElementById('pivotSummary');
+    const tableCards = document.getElementById('tableCards');
+    const quarantineCards = document.getElementById('quarantineCards');
+    const detailView = document.getElementById('detailView');
+    const expectedShape = document.getElementById('expectedShape');
+
+    const filterDepartment = document.getElementById('filterDepartment');
+    const filterMachine = document.getElementById('filterMachine');
+    const filterTimeframe = document.getElementById('filterTimeframe');
+    const filterUnit = document.getElementById('filterUnit');
+
+    const EXPECTED = {
+      departments: 3,
+      machines: 3,
+      timeframes: 3,
+      units: 4
+    };
+
+    fileInput.addEventListener('change', () => {
+      runBtn.disabled = !fileInput.files.length;
+    });
+
+    runBtn.addEventListener('click', async () => {
+      if (!fileInput.files.length) return;
+      resetState();
+      const file = fileInput.files[0];
+      const data = await file.arrayBuffer();
+      state.workbook = XLSX.read(data, { type: 'array', cellDates: true });
+      await runExtraction();
+      renderAll();
+      exportCsvBtn.disabled = state.facts.length === 0;
+      exportJsonBtn.disabled = state.tableRecords.length === 0;
+      exportLogBtn.disabled = state.extractionLog.length === 0;
+    });
+
+    filterDepartment.addEventListener('change', () => {
+      state.filters.department = filterDepartment.value;
+      renderTables();
+    });
+    filterMachine.addEventListener('change', () => {
+      state.filters.machine = filterMachine.value;
+      renderTables();
+    });
+    filterTimeframe.addEventListener('change', () => {
+      state.filters.timeframe = filterTimeframe.value;
+      renderTables();
+    });
+    filterUnit.addEventListener('change', () => {
+      state.filters.unit = filterUnit.value;
+      renderTables();
+    });
+
+    exportCsvBtn.addEventListener('click', () => {
+      const csv = toCsv(state.facts);
+      downloadFile(csv, 'facts.csv', 'text/csv');
+    });
+
+    exportJsonBtn.addEventListener('click', () => {
+      const payload = {
+        summary: state.summary,
+        tableRecords: state.tableRecords,
+        facts: state.facts
+      };
+      downloadFile(JSON.stringify(payload, null, 2), 'extraction.json', 'application/json');
+    });
+
+    exportLogBtn.addEventListener('click', () => {
+      downloadFile(JSON.stringify(state.extractionLog, null, 2), 'extraction_log.json', 'application/json');
+    });
+
+    function resetState() {
+      state.tableRecords = [];
+      state.facts = [];
+      state.nonTargetTables = [];
+      state.extractionLog = [];
+      state.summary = null;
+      tableCards.innerHTML = '';
+      quarantineCards.innerHTML = '';
+      detailView.innerHTML = '<p class="muted">Select a table to see details.</p>';
+      summaryStats.innerHTML = '';
+      pivotSummary.innerHTML = '';
+      progressBar.style.width = '0%';
+    }
+
+    async function runExtraction() {
+      const sheetNames = state.workbook.SheetNames;
+      const totalSheets = sheetNames.length;
+      for (let index = 0; index < sheetNames.length; index += 1) {
+        const sheetName = sheetNames[index];
+        const ws = state.workbook.Sheets[sheetName];
+        const grid = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+        const mergeInfo = buildMergeLookup(ws['!merges'] || []);
+        extractTablesFromSheet({ sheetName, ws, grid, mergeInfo });
+        progressBar.style.width = `${Math.round(((index + 1) / totalSheets) * 100)}%`;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      buildFacts();
+      computeSummary();
+    }
+
+    function buildMergeLookup(merges) {
+      const anchorToRange = new Map();
+      const mergedCells = [];
+      merges.forEach((range) => {
+        const key = `${range.s.r},${range.s.c}`;
+        anchorToRange.set(key, range);
+        mergedCells.push(range);
+      });
+      return {
+        anchorToRange,
+        getMergeAnchor(r, c) {
+          for (const range of mergedCells) {
+            if (r >= range.s.r && r <= range.e.r && c >= range.s.c && c <= range.e.c) {
+              return { ar: range.s.r, ac: range.s.c };
+            }
+          }
+          return null;
+        }
+      };
+    }
+
+    function normalizeValue(value) {
+      if (value == null) return null;
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed === '' ? null : trimmed;
+      }
+      if (typeof value === 'number') return value;
+      if (value instanceof Date) return value.toISOString().split('T')[0];
+      return String(value).trim() || null;
+    }
+
+    function isEmptyValue(value) {
+      return value == null || (typeof value === 'string' && value.trim() === '');
+    }
+
+    function getVisibleValue(ws, grid, mergeInfo, r, c) {
+      const anchor = mergeInfo.getMergeAnchor(r, c);
+      if (anchor) {
+        return normalizeValue(grid[anchor.ar]?.[anchor.ac]);
+      }
+      return normalizeValue(grid[r]?.[c]);
+    }
+
+    function normalizeHeaderTime(value) {
+      if (value == null) return null;
+      if (typeof value === 'number' && value > 25000 && value < 60000) {
+        const date = XLSX.SSF.parse_date_code(value);
+        if (date) {
+          const iso = new Date(Date.UTC(date.y, date.m - 1, date.d)).toISOString();
+          return iso.split('T')[0];
+        }
+      }
+      return String(value).trim();
+    }
+
+    function extractTablesFromSheet({ sheetName, ws, grid, mergeInfo }) {
+      const department = sheetName;
+      const headerCandidates = findHeaderCandidates(ws, grid, mergeInfo);
+      headerCandidates.forEach((candidate) => {
+        const result = processCandidate({ candidate, sheetName, department, ws, grid, mergeInfo });
+        if (result) {
+          state.tableRecords.push(result.tableRecord);
+          state.extractionLog.push(result.logEntry);
+        }
+      });
+    }
+
+    function findHeaderCandidates(ws, grid, mergeInfo) {
+      const candidates = [];
+      for (let r = 0; r < grid.length; r += 1) {
+        const row = grid[r] || [];
+        for (let c = 0; c < row.length; c += 1) {
+          const value = getVisibleValue(ws, grid, mergeInfo, r, c);
+          const next = getVisibleValue(ws, grid, mergeInfo, r, c + 1);
+          const third = getVisibleValue(ws, grid, mergeInfo, r, c + 2);
+          if (value && next && /^key$/i.test(String(value)) && /^module$/i.test(String(next)) && !isEmptyValue(third)) {
+            candidates.push({ r, c });
+          }
+        }
+      }
+      return candidates;
+    }
+
+    function processCandidate({ candidate, sheetName, department, ws, grid, mergeInfo }) {
+      const rh = candidate.r;
+      const tableKeyCol = candidate.c;
+      const tableModuleCol = tableKeyCol + 1;
+      const timeStartCol = tableKeyCol + 2;
+      const headerRowValues = collectTimeHeaders({ ws, grid, mergeInfo, rh, timeStartCol });
+      const timeHeaders = headerRowValues.headers;
+      const cEnd = headerRowValues.cEnd;
+
+      const metaResult = extractMetadata({ ws, grid, mergeInfo, rh, tableKeyCol, timeStartCol });
+      const unitLabel = metaResult.unitLabel;
+      const timeframeLabel = metaResult.timeframeLabel;
+      const headerRange = metaResult.headerRange;
+      const rMeta = metaResult.rMeta;
+
+      const dataScan = scanDataRows({ ws, grid, mergeInfo, rh, tableKeyCol, tableModuleCol, timeStartCol, cEnd });
+      const rEnd = dataScan.rEnd;
+      const dataRows = dataScan.dataRows;
+
+      const reasons = [];
+      if (!unitLabel || !timeframeLabel) reasons.push('missing metadata labels');
+      if (timeHeaders.length < 2) reasons.push('time headers too short');
+      if (dataRows.length === 0) reasons.push('no data rows');
+
+      const isTarget = reasons.length === 0;
+
+      const tableRange = { r0: rMeta, c0: tableKeyCol, r1: rEnd, c1: cEnd };
+      const machineName = resolveMachineName({ ws, grid, mergeInfo, rh, rMeta, tableKeyCol, rEnd });
+      const boundaryScore = checkBoundaryIsolation({ ws, grid, mergeInfo, tableRange });
+
+      if (!isTarget) {
+        state.nonTargetTables.push({
+          id: `Q-${sheetName}-${rh}-${tableKeyCol}`,
+          sheetName,
+          department,
+          headerRow: rh,
+          keyColumn: tableKeyCol,
+          tableRange,
+          reasons,
+          preview: buildPreview({ ws, grid, mergeInfo, r0: rMeta, c0: tableKeyCol, r1: Math.min(rEnd, rMeta + 8), c1: Math.min(cEnd, tableKeyCol + 8) })
+        });
+        state.extractionLog.push({
+          sheetName,
+          candidate: { rh, tableKeyCol },
+          status: 'quarantined',
+          reasons
+        });
+        return null;
+      }
+
+      const { rows, totalRow } = parseTableRows({
+        ws,
+        grid,
+        mergeInfo,
+        rh,
+        rEnd,
+        tableKeyCol,
+        tableModuleCol,
+        timeStartCol,
+        timeHeaders,
+        cEnd
+      });
+
+      const qualityFlags = [];
+      if (!machineName || machineName === 'Unknown machine') qualityFlags.push('Missing machine name');
+      if (!boundaryScore.isIsolated) qualityFlags.push('Weak boundary isolation');
+      if (totalRow) qualityFlags.push('Total row detected');
+
+      const tableRecord = {
+        id: `T-${sheetName}-${rh}-${tableKeyCol}`,
+        department,
+        sheetName,
+        machineName: machineName || 'Unknown machine',
+        unitLabel,
+        timeframeLabel,
+        tableRange,
+        headerRange,
+        detectedAt: new Date().toISOString(),
+        times: timeHeaders,
+        rows,
+        totalRow,
+        qualityFlags
+      };
+
+      const logEntry = {
+        sheetName,
+        candidate: { rh, tableKeyCol },
+        status: 'target',
+        unitLabel,
+        timeframeLabel,
+        timeColumns: timeHeaders.length,
+        dataRows: rows.length,
+        machineName: tableRecord.machineName,
+        boundaryScore
+      };
+
+      return { tableRecord, logEntry };
+    }
+
+    function collectTimeHeaders({ ws, grid, mergeInfo, rh, timeStartCol }) {
+      const headers = [];
+      let cEnd = timeStartCol;
+      let emptyStreak = 0;
+      const maxWidth = timeStartCol + 250;
+      for (let c = timeStartCol; c <= maxWidth; c += 1) {
+        const value = getVisibleValue(ws, grid, mergeInfo, rh, c);
+        if (!isEmptyValue(value)) {
+          headers.push(normalizeHeaderTime(value));
+          cEnd = c;
+          emptyStreak = 0;
+        } else {
+          emptyStreak += 1;
+          if (emptyStreak >= 2) break;
+        }
+      }
+      return { headers: headers.filter(Boolean), cEnd };
+    }
+
+    function extractMetadata({ ws, grid, mergeInfo, rh, tableKeyCol, timeStartCol }) {
+      const candidates = [rh - 1, rh - 2].filter((r) => r >= 0);
+      let unitLabel = null;
+      let timeframeLabel = null;
+      let rMeta = candidates[0] ?? rh - 1;
+      let headerRange = { r0: rMeta, c0: tableKeyCol, r1: rh, c1: timeStartCol + 5 };
+
+      for (const rMetaCandidate of candidates) {
+        const scan = scanMetadataRow({ ws, grid, mergeInfo, r: rMetaCandidate, c0: tableKeyCol, c1: timeStartCol + 6 });
+        if (scan.unitLabel && scan.timeframeLabel) {
+          unitLabel = scan.unitLabel;
+          timeframeLabel = scan.timeframeLabel;
+          rMeta = rMetaCandidate;
+          headerRange = { r0: rMetaCandidate, c0: tableKeyCol, r1: rh, c1: timeStartCol + 6 };
+          break;
+        }
+      }
+
+      if (!unitLabel || !timeframeLabel) {
+        const fallback = scanMetadataRow({ ws, grid, mergeInfo, r: rh - 1, c0: tableKeyCol, c1: timeStartCol + 6 });
+        unitLabel = unitLabel || fallback.unitLabel;
+        timeframeLabel = timeframeLabel || fallback.timeframeLabel;
+      }
+
+      return { unitLabel, timeframeLabel, headerRange, rMeta };
+    }
+
+    function scanMetadataRow({ ws, grid, mergeInfo, r, c0, c1 }) {
+      let unitLabel = null;
+      let timeframeLabel = null;
+      for (let c = c0; c <= c1; c += 1) {
+        const value = getVisibleValue(ws, grid, mergeInfo, r, c);
+        if (!isEmptyValue(value)) {
+          if (!unitLabel) {
+            unitLabel = String(value);
+          } else if (!timeframeLabel) {
+            timeframeLabel = String(value);
+            break;
+          }
+        }
+      }
+      if (!timeframeLabel && r + 1 < grid.length) {
+        for (let c = c0; c <= c1; c += 1) {
+          const value = getVisibleValue(ws, grid, mergeInfo, r + 1, c);
+          if (!isEmptyValue(value)) {
+            if (!unitLabel) {
+              unitLabel = String(value);
+            } else if (!timeframeLabel) {
+              timeframeLabel = String(value);
+              break;
+            }
+          }
+        }
+      }
+      return { unitLabel, timeframeLabel };
+    }
+
+    function scanDataRows({ ws, grid, mergeInfo, rh, tableKeyCol, tableModuleCol, timeStartCol, cEnd }) {
+      const dataRows = [];
+      let rEnd = rh;
+      let emptyStreak = 0;
+      const maxHeight = rh + 400;
+      for (let r = rh + 1; r <= maxHeight; r += 1) {
+        const keyValue = getVisibleValue(ws, grid, mergeInfo, r, tableKeyCol);
+        const moduleValue = getVisibleValue(ws, grid, mergeInfo, r, tableModuleCol);
+        const valueFill = countRowValues({ ws, grid, mergeInfo, r, timeStartCol, cEnd });
+        const isRowEmpty = isEmptyValue(keyValue) && isEmptyValue(moduleValue) && valueFill === 0;
+
+        if (!isRowEmpty) {
+          dataRows.push(r);
+          rEnd = r;
+          emptyStreak = 0;
+        } else {
+          emptyStreak += 1;
+          if (emptyStreak >= 3) break;
+        }
+      }
+      return { dataRows, rEnd };
+    }
+
+    function countRowValues({ ws, grid, mergeInfo, r, c0, c1 }) {
+      let count = 0;
+      for (let c = c0; c <= c1; c += 1) {
+        const value = getVisibleValue(ws, grid, mergeInfo, r, c);
+        if (!isEmptyValue(value)) count += 1;
+      }
+      return count;
+    }
+
+    function resolveMachineName({ ws, grid, mergeInfo, rh, rMeta, tableKeyCol, rEnd }) {
+      const machineCol = tableKeyCol - 1;
+      if (machineCol < 0) return 'Unknown machine';
+      const direct = getVisibleValue(ws, grid, mergeInfo, rh, machineCol);
+      if (!isEmptyValue(direct)) return String(direct);
+
+      for (let r = rh; r >= Math.max(0, rMeta - 10); r -= 1) {
+        const value = getVisibleValue(ws, grid, mergeInfo, r, machineCol);
+        if (!isEmptyValue(value)) return String(value);
+      }
+
+      for (let r = rh + 1; r <= Math.min(rEnd, rh + 10); r += 1) {
+        const value = getVisibleValue(ws, grid, mergeInfo, r, machineCol);
+        if (!isEmptyValue(value)) return String(value);
+      }
+
+      return 'Unknown machine';
+    }
+
+    function parseTableRows({ ws, grid, mergeInfo, rh, rEnd, tableKeyCol, tableModuleCol, timeStartCol, timeHeaders, cEnd }) {
+      const rows = [];
+      let totalRow = null;
+
+      for (let r = rh + 1; r <= rEnd; r += 1) {
+        const key = getVisibleValue(ws, grid, mergeInfo, r, tableKeyCol);
+        const module = getVisibleValue(ws, grid, mergeInfo, r, tableModuleCol);
+        const valuesByTime = {};
+        let numericCount = 0;
+
+        for (let c = timeStartCol; c <= cEnd; c += 1) {
+          const timeLabel = timeHeaders[c - timeStartCol];
+          const value = getVisibleValue(ws, grid, mergeInfo, r, c);
+          const num = parseNumeric(value);
+          if (num !== null) numericCount += 1;
+          valuesByTime[timeLabel] = num;
+        }
+
+        const row = {
+          key: key ? String(key) : null,
+          module: module ? String(module) : null,
+          valuesByTime,
+          isTotalRow: false
+        };
+
+        const keyText = key ? String(key) : '';
+        const looksTotal = /total|sum|totaal/i.test(keyText);
+        const fillRatio = timeHeaders.length ? numericCount / timeHeaders.length : 0;
+        if (looksTotal || (r === rEnd && fillRatio > 0.6)) {
+          row.isTotalRow = true;
+          totalRow = row;
+        } else if (!isEmptyValue(row.key) || !isEmptyValue(row.module)) {
+          rows.push(row);
+        }
+      }
+
+      return { rows, totalRow };
+    }
+
+    function parseNumeric(value) {
+      if (value == null) return null;
+      if (typeof value === 'number') return value;
+      if (typeof value === 'string') {
+        const cleaned = value.replace(/,/g, '').trim();
+        if (cleaned === '') return null;
+        const num = Number(cleaned);
+        return Number.isNaN(num) ? null : num;
+      }
+      return null;
+    }
+
+    function checkBoundaryIsolation({ ws, grid, mergeInfo, tableRange }) {
+      const samples = [];
+      const rSamples = [tableRange.r0, tableRange.r1, Math.floor((tableRange.r0 + tableRange.r1) / 2)];
+      rSamples.forEach((r) => {
+        samples.push({ r, c: tableRange.c1 + 1 });
+        samples.push({ r, c: tableRange.c1 + 2 });
+        samples.push({ r: tableRange.r1 + 1, c: tableRange.c0 });
+      });
+
+      let emptyCount = 0;
+      samples.forEach((cell) => {
+        const value = getVisibleValue(ws, grid, mergeInfo, cell.r, cell.c);
+        if (isEmptyValue(value)) emptyCount += 1;
+      });
+
+      const ratio = emptyCount / samples.length;
+      return { ratio, isIsolated: ratio >= 0.6 };
+    }
+
+    function buildFacts() {
+      state.facts = [];
+      state.tableRecords.forEach((record) => {
+        record.rows.forEach((row) => {
+          record.times.forEach((time) => {
+            state.facts.push({
+              department: record.department,
+              machine: record.machineName,
+              timeframeLabel: record.timeframeLabel,
+              unitLabel: record.unitLabel,
+              key: row.key,
+              module: row.module,
+              time,
+              value: row.valuesByTime[time],
+              isTotalRow: false
+            });
+          });
+        });
+        if (record.totalRow) {
+          record.times.forEach((time) => {
+            state.facts.push({
+              department: record.department,
+              machine: record.machineName,
+              timeframeLabel: record.timeframeLabel,
+              unitLabel: record.unitLabel,
+              key: record.totalRow.key,
+              module: record.totalRow.module,
+              time,
+              value: record.totalRow.valuesByTime[time],
+              isTotalRow: true
+            });
+          });
+        }
+      });
+    }
+
+    function computeSummary() {
+      const departments = new Set();
+      const machines = new Set();
+      const timeframes = new Set();
+      const units = new Set();
+      state.tableRecords.forEach((record) => {
+        departments.add(record.department);
+        machines.add(record.machineName);
+        timeframes.add(record.timeframeLabel);
+        units.add(record.unitLabel);
+      });
+      state.summary = {
+        sheetCount: state.workbook.SheetNames.length,
+        targetTables: state.tableRecords.length,
+        quarantinedTables: state.nonTargetTables.length,
+        departments: Array.from(departments),
+        machines: Array.from(machines),
+        timeframes: Array.from(timeframes),
+        units: Array.from(units)
+      };
+    }
+
+    function renderAll() {
+      renderSummary();
+      renderPivot();
+      renderFilters();
+      renderTables();
+      renderQuarantine();
+      renderExpectedShape();
+    }
+
+    function renderSummary() {
+      const stats = [
+        { label: 'Sheets', value: state.summary.sheetCount },
+        { label: 'Target tables', value: state.summary.targetTables },
+        { label: 'Quarantined', value: state.summary.quarantinedTables },
+        { label: 'Departments', value: state.summary.departments.length },
+        { label: 'Machines', value: state.summary.machines.length },
+        { label: 'Timeframes', value: state.summary.timeframes.length },
+        { label: 'Units', value: state.summary.units.length }
+      ];
+      summaryStats.innerHTML = stats.map((stat) => `
+        <div class="stat-card">
+          <span class="muted">${stat.label}</span>
+          <strong>${stat.value}</strong>
+        </div>
+      `).join('');
+    }
+
+    function renderExpectedShape() {
+      const expectedTables = EXPECTED.departments * EXPECTED.machines * EXPECTED.timeframes * EXPECTED.units;
+      expectedShape.textContent = `Expected roughly ${EXPECTED.departments} departments × ${EXPECTED.machines} machines × ${EXPECTED.timeframes} timeframes × ${EXPECTED.units} units = ${expectedTables} tables. Detected ${state.tableRecords.length} target tables.`;
+    }
+
+    function renderPivot() {
+      if (!state.tableRecords.length) {
+        pivotSummary.innerHTML = '<p class="muted">No target tables detected.</p>';
+        return;
+      }
+      const pivot = {};
+      state.tableRecords.forEach((record) => {
+        pivot[record.department] = pivot[record.department] || {};
+        pivot[record.department][record.machineName] = pivot[record.department][record.machineName] || {};
+        const timeframe = pivot[record.department][record.machineName];
+        timeframe[record.timeframeLabel] = timeframe[record.timeframeLabel] || {};
+        timeframe[record.timeframeLabel][record.unitLabel] = (timeframe[record.timeframeLabel][record.unitLabel] || 0) + 1;
+      });
+
+      const html = Object.entries(pivot).map(([dept, machines]) => {
+        const machineHtml = Object.entries(machines).map(([machine, timeframes]) => {
+          const timeframeHtml = Object.entries(timeframes).map(([timeframe, units]) => {
+            const unitHtml = Object.entries(units).map(([unit, count]) => `<li>${unit}: ${count}</li>`).join('');
+            return `<li><strong>${timeframe}</strong><ul>${unitHtml}</ul></li>`;
+          }).join('');
+          return `<li><strong>${machine}</strong><ul>${timeframeHtml}</ul></li>`;
+        }).join('');
+        return `<div><strong>${dept}</strong><ul>${machineHtml}</ul></div>`;
+      }).join('');
+
+      pivotSummary.innerHTML = `<div class="two-col">${html}</div>`;
+    }
+
+    function renderFilters() {
+      populateFilter(filterDepartment, state.summary.departments);
+      populateFilter(filterMachine, state.summary.machines);
+      populateFilter(filterTimeframe, state.summary.timeframes);
+      populateFilter(filterUnit, state.summary.units);
+    }
+
+    function populateFilter(select, values) {
+      const previous = select.value || 'All';
+      select.innerHTML = '';
+      ['All', ...values].forEach((value) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+      });
+      select.value = values.includes(previous) ? previous : 'All';
+    }
+
+    function filterRecord(record) {
+      const { department, machine, timeframe, unit } = state.filters;
+      if (department !== 'All' && record.department !== department) return false;
+      if (machine !== 'All' && record.machineName !== machine) return false;
+      if (timeframe !== 'All' && record.timeframeLabel !== timeframe) return false;
+      if (unit !== 'All' && record.unitLabel !== unit) return false;
+      return true;
+    }
+
+    function renderTables() {
+      const filtered = state.tableRecords.filter(filterRecord);
+      if (!filtered.length) {
+        tableCards.innerHTML = '<p class="muted">No tables match the selected filters.</p>';
+        return;
+      }
+      tableCards.innerHTML = '';
+      filtered.forEach((record) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        const confidence = calculateConfidence(record);
+        card.innerHTML = `
+          <div class="stack">
+            <span class="tag">${record.department}</span>
+            <span class="tag">${record.machineName}</span>
+            <span class="tag">${record.timeframeLabel}</span>
+            <span class="tag">${record.unitLabel}</span>
+          </div>
+          <h4>Table ${record.id}</h4>
+          <p class="muted">${record.rows.length} rows · ${record.times.length} time columns</p>
+          <div class="stack">
+            <span class="pill ${confidence >= 70 ? 'success' : 'warning'}">Confidence ${confidence}%</span>
+            ${record.qualityFlags.map((flag) => `<span class="pill warning">${flag}</span>`).join('')}
+          </div>
+          <div class="linkish" data-id="${record.id}">View details</div>
+        `;
+        card.querySelector('.linkish').addEventListener('click', () => renderDetail(record));
+        tableCards.appendChild(card);
+      });
+    }
+
+    function calculateConfidence(record) {
+      let score = 50;
+      if (record.unitLabel && record.timeframeLabel) score += 15;
+      if (record.times.length >= 3) score += 10;
+      if (record.qualityFlags.includes('Weak boundary isolation')) score -= 10;
+      if (record.machineName === 'Unknown machine') score -= 10;
+      return Math.max(0, Math.min(100, score));
+    }
+
+    function renderQuarantine() {
+      if (!state.nonTargetTables.length) {
+        quarantineCards.innerHTML = '<p class="muted">No quarantined tables.</p>';
+        return;
+      }
+      quarantineCards.innerHTML = '';
+      state.nonTargetTables.forEach((table) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          <div class="stack">
+            <span class="tag">${table.department}</span>
+            <span class="tag">${table.sheetName}</span>
+          </div>
+          <h4>${table.id}</h4>
+          <p class="muted">Reasons: ${table.reasons.join(', ')}</p>
+          ${renderPreviewTable(table.preview)}
+        `;
+        quarantineCards.appendChild(card);
+      });
+    }
+
+    function renderDetail(record) {
+      detailView.innerHTML = `
+        <h4>${record.department} · ${record.machineName}</h4>
+        <p class="muted">${record.timeframeLabel} · ${record.unitLabel}</p>
+        <div class="stack">
+          <span class="pill">Range r${record.tableRange.r0}:c${record.tableRange.c0} → r${record.tableRange.r1}:c${record.tableRange.c1}</span>
+          ${record.qualityFlags.map((flag) => `<span class="pill warning">${flag}</span>`).join('')}
+        </div>
+        <h5>Preview</h5>
+        ${renderPreviewTable(buildPreviewFromRecord(record))}
+      `;
+    }
+
+    function buildPreviewFromRecord(record) {
+      const ws = state.workbook.Sheets[record.sheetName];
+      const grid = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+      const mergeInfo = buildMergeLookup(ws['!merges'] || []);
+      return buildPreview({
+        ws,
+        grid,
+        mergeInfo,
+        r0: record.tableRange.r0,
+        c0: record.tableRange.c0,
+        r1: Math.min(record.tableRange.r0 + 8, record.tableRange.r1),
+        c1: Math.min(record.tableRange.c0 + 8, record.tableRange.c1)
+      });
+    }
+
+    function buildPreview({ ws, grid, mergeInfo, r0, c0, r1, c1 }) {
+      const rows = [];
+      for (let r = r0; r <= r1; r += 1) {
+        const row = [];
+        for (let c = c0; c <= c1; c += 1) {
+          row.push(getVisibleValue(ws, grid, mergeInfo, r, c));
+        }
+        rows.push(row);
+      }
+      return rows;
+    }
+
+    function renderPreviewTable(preview) {
+      if (!preview || !preview.length) return '<p class="muted">No preview available.</p>';
+      const header = preview[0] || [];
+      const body = preview.slice(1);
+      return `
+        <div class="table-preview">
+          <table>
+            <thead>
+              <tr>${header.map((cell) => `<th>${cell ?? ''}</th>`).join('')}</tr>
+            </thead>
+            <tbody>
+              ${body.map((row) => `<tr>${row.map((cell) => `<td>${cell ?? ''}</td>`).join('')}</tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function toCsv(rows) {
+      if (!rows.length) return '';
+      const headers = Object.keys(rows[0]);
+      const escapeCell = (value) => {
+        if (value == null) return '';
+        const text = String(value).replace(/"/g, '""');
+        if (/[,\n"]/.test(text)) return `"${text}"`;
+        return text;
+      };
+      const csvRows = [headers.join(',')];
+      rows.forEach((row) => {
+        csvRows.push(headers.map((header) => escapeCell(row[header])).join(','));
+      });
+      return csvRows.join('\n');
+    }
+
+    function downloadFile(content, filename, type) {
+      const blob = new Blob([content], { type });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+</html>
