@@ -18,6 +18,7 @@
       --success: #16a34a;
       --border: #e5e7eb;
       --shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+      --detail-scale: 1;
       font-family: "Inter", system-ui, -apple-system, sans-serif;
     }
 
@@ -213,10 +214,30 @@
     }
 
     .table-preview {
-      overflow-x: auto;
+      overflow: auto;
+      max-height: 420px;
       border-radius: 12px;
       border: 1px solid var(--border);
       background: #fff;
+    }
+
+    .table-preview.zoomable th,
+    .table-preview.zoomable td {
+      padding: calc(6px * var(--detail-scale)) calc(8px * var(--detail-scale));
+      font-size: calc(0.85rem * var(--detail-scale));
+    }
+
+    .detail-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .detail-controls span {
+      font-size: 0.85rem;
+      color: var(--muted);
     }
 
     table {
@@ -347,8 +368,8 @@
 
       <div class="panel controls">
         <div class="input-group">
-          <label for="fileInput">Excel file (.xlsx)</label>
-          <input id="fileInput" type="file" accept=".xlsx" />
+          <label for="fileInput">Excel file (.xlsx, .xlsm)</label>
+          <input id="fileInput" type="file" accept=".xlsx,.xlsm,application/vnd.ms-excel.sheet.macroEnabled.12" />
         </div>
         <button class="button" id="runBtn" disabled>Run extraction</button>
         <div class="progress"><span id="progressBar"></span></div>
@@ -407,6 +428,11 @@
 
       <div>
         <h3 class="section-title">Detail view</h3>
+        <div class="detail-controls">
+          <label for="detailScale" class="small">Zoom</label>
+          <input id="detailScale" type="range" min="0.6" max="1.6" step="0.1" value="1" />
+          <span id="detailScaleValue">100%</span>
+        </div>
         <div id="detailView" class="card"></div>
       </div>
     </section>
@@ -425,7 +451,8 @@
         machine: 'All',
         timeframe: 'All',
         unit: 'All'
-      }
+      },
+      detailScale: 1
     };
 
     const fileInput = document.getElementById('fileInput');
@@ -440,6 +467,8 @@
     const quarantineCards = document.getElementById('quarantineCards');
     const detailView = document.getElementById('detailView');
     const expectedShape = document.getElementById('expectedShape');
+    const detailScale = document.getElementById('detailScale');
+    const detailScaleValue = document.getElementById('detailScaleValue');
 
     const filterDepartment = document.getElementById('filterDepartment');
     const filterMachine = document.getElementById('filterMachine');
@@ -455,6 +484,13 @@
 
     fileInput.addEventListener('change', () => {
       runBtn.disabled = !fileInput.files.length;
+    });
+
+    detailScale.addEventListener('input', (event) => {
+      const scale = Number(event.target.value);
+      state.detailScale = scale;
+      document.documentElement.style.setProperty('--detail-scale', scale);
+      detailScaleValue.textContent = `${Math.round(scale * 100)}%`;
     });
 
     runBtn.addEventListener('click', async () => {
@@ -511,12 +547,16 @@
       state.nonTargetTables = [];
       state.extractionLog = [];
       state.summary = null;
+      state.detailScale = 1;
       tableCards.innerHTML = '';
       quarantineCards.innerHTML = '';
       detailView.innerHTML = '<p class="muted">Select a table to see details.</p>';
       summaryStats.innerHTML = '';
       pivotSummary.innerHTML = '';
       progressBar.style.width = '0%';
+      detailScale.value = '1';
+      detailScaleValue.textContent = '100%';
+      document.documentElement.style.setProperty('--detail-scale', '1');
     }
 
     async function runExtraction() {
@@ -605,6 +645,13 @@
 
     function findHeaderCandidates(ws, grid, mergeInfo) {
       const candidates = [];
+      const seen = new Set();
+      const addCandidate = (r, c) => {
+        const key = `${r},${c}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        candidates.push({ r, c });
+      };
       for (let r = 0; r < grid.length; r += 1) {
         const row = grid[r] || [];
         for (let c = 0; c < row.length; c += 1) {
@@ -612,7 +659,14 @@
           const next = getVisibleValue(ws, grid, mergeInfo, r, c + 1);
           const third = getVisibleValue(ws, grid, mergeInfo, r, c + 2);
           if (value && next && /^key$/i.test(String(value)) && /^module$/i.test(String(next)) && !isEmptyValue(third)) {
-            candidates.push({ r, c });
+            addCandidate(r, c);
+          }
+          if (value && /^key$/i.test(String(value)) && r + 1 < grid.length) {
+            const belowModule = getVisibleValue(ws, grid, mergeInfo, r + 1, c + 1);
+            const belowThird = getVisibleValue(ws, grid, mergeInfo, r + 1, c + 2);
+            if (belowModule && /^module$/i.test(String(belowModule)) && !isEmptyValue(belowThird)) {
+              addCandidate(r + 1, c);
+            }
           }
         }
       }
@@ -1167,7 +1221,7 @@
       const header = preview[0] || [];
       const body = preview.slice(1);
       return `
-        <div class="table-preview">
+        <div class="table-preview zoomable">
           <table>
             <thead>
               <tr>${header.map((cell) => `<th>${cell ?? ''}</th>`).join('')}</tr>
