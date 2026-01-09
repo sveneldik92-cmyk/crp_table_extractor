@@ -935,21 +935,23 @@
           for (let j = i + 1; j < records.length; j += 1) {
             const recordB = records[j];
             if (rangesOverlap(recordA.tableRange, recordB.tableRange)) {
+              const rangeA = formatRangeLabel(recordA.tableRange);
+              const rangeB = formatRangeLabel(recordB.tableRange);
               overlapsById.get(recordA.id).push(recordB.id);
               overlapsById.get(recordB.id).push(recordA.id);
               overlapPairs.push({
                 sheetName,
                 tableA: recordA.id,
                 tableB: recordB.id,
-                rangeA: recordA.tableRange,
-                rangeB: recordB.tableRange
+                rangeA,
+                rangeB
               });
-              logEvent('error', `Overlapping tables detected on "${sheetName}": ${recordA.id} overlaps ${recordB.id}.`, {
+              logEvent('error', `Overlapping tables detected on "${sheetName}": ${recordA.id} ${rangeA} overlaps ${recordB.id} ${rangeB}.`, {
                 sheetName,
                 tableA: recordA.id,
                 tableB: recordB.id,
-                rangeA: recordA.tableRange,
-                rangeB: recordB.tableRange
+                rangeA,
+                rangeB
               });
             }
           }
@@ -964,6 +966,14 @@
 
     function rangesOverlap(a, b) {
       return a.r0 <= b.r1 && a.r1 >= b.r0 && a.c0 <= b.c1 && a.c1 >= b.c0;
+    }
+
+    function formatRangeLabel(range) {
+      const a1 = XLSX.utils.encode_range({
+        s: { r: range.r0, c: range.c0 },
+        e: { r: range.r1, c: range.c1 }
+      });
+      return `${a1} (r${range.r0 + 1}:c${range.c0 + 1} → r${range.r1 + 1}:c${range.c1 + 1})`;
     }
 
     function buildMergeLookup(merges) {
@@ -1168,7 +1178,6 @@
 
       const tableRange = { r0: rMeta, c0: tableKeyCol, r1: rEnd, c1: cEnd };
       const machineName = resolveMachineName({ ws, grid, mergeInfo, rh, rMeta, tableKeyCol, rEnd });
-      const boundaryScore = checkBoundaryIsolation({ ws, grid, mergeInfo, tableRange });
 
       if (!isTarget) {
         state.nonTargetTables.push({
@@ -1188,7 +1197,7 @@
       }
 
       const tableId = `T-${sheetName}-${rh}-${tableKeyCol}`;
-      const { rows, totalRow } = parseTableRows({
+      const { rows, totalRow, dataEndRow } = parseTableRows({
         ws,
         grid,
         mergeInfo,
@@ -1202,7 +1211,10 @@
         sheetName,
         tableId
       });
+      const effectiveEndRow = dataEndRow ?? rEnd;
+      tableRange.r1 = effectiveEndRow;
 
+      const boundaryScore = checkBoundaryIsolation({ ws, grid, mergeInfo, tableRange });
       const qualityFlags = [];
       if (!machineName || machineName === 'Unknown machine') qualityFlags.push('Missing machine name');
       if (!boundaryScore.isIsolated) qualityFlags.push('Weak boundary isolation');
@@ -1439,13 +1451,11 @@
     }) {
       const rows = [];
       let totalRow = null;
+      let dataEndRow = null;
 
       for (let r = rh + 1; r <= rEnd; r += 1) {
         const key = getVisibleValue(ws, grid, mergeInfo, r, tableKeyCol);
         const module = getVisibleValue(ws, grid, mergeInfo, r, tableModuleCol);
-        if (shouldSkipRowByKeyCell(key)) {
-          continue;
-        }
         const valuesByTime = {};
         let numericCount = 0;
 
@@ -1480,17 +1490,27 @@
         };
 
         const keyText = key ? String(key) : '';
-        const looksTotal = /total|sum|totaal/i.test(keyText);
+        const moduleText = module ? String(module) : '';
+        const looksTotal = /total|sum|totaal/i.test(keyText) || /total|sum|totaal/i.test(moduleText);
         const fillRatio = timeHeaders.length ? numericCount / timeHeaders.length : 0;
         if (looksTotal || (r === rEnd && fillRatio > 0.6)) {
           row.isTotalRow = true;
           totalRow = row;
-        } else if (!isEmptyValue(row.key) || !isEmptyValue(row.module)) {
+          if (rows.length) {
+            dataEndRow = r - 1;
+          }
+          break;
+        }
+        if (shouldSkipRowByKeyCell(key) && !looksTotal) {
+          continue;
+        }
+        if (!isEmptyValue(row.key) || !isEmptyValue(row.module)) {
           rows.push(row);
+          dataEndRow = r;
         }
       }
 
-      return { rows, totalRow };
+      return { rows, totalRow, dataEndRow };
     }
 
     function parseNumeric(value) {
@@ -2048,7 +2068,7 @@
       if (overlapPairs.length) {
         issues.push({
           title: `Overlapping tables (${overlapPairs.length})`,
-          details: overlapPairs.slice(0, 4).map((overlap) => `Sheet "${overlap.sheetName}": ${overlap.tableA} overlaps ${overlap.tableB}`),
+          details: overlapPairs.slice(0, 4).map((overlap) => `Sheet "${overlap.sheetName}": ${overlap.tableA} ${overlap.rangeA} overlaps ${overlap.tableB} ${overlap.rangeB}`),
           fix: 'Separate the tables with at least one empty row or column, or adjust merged cells so each table occupies a unique range.'
         });
       } else {
@@ -2237,13 +2257,18 @@
     }
 
     function buildMacroModule(records) {
-      const sanitizedRecords = records.map((record, index) => ({
-        index: index + 1,
-        sheetName: record.sheetName,
-        range: buildMacroRange(record),
-        tableName: `ExtractedTable_${String(index + 1).padStart(3, '0')}`,
-        queryName: `Query_ExtractedTable_${String(index + 1).padStart(3, '0')}`
-      }));
+      const nameTracker = new Map();
+      const sanitizedRecords = records.map((record, index) => {
+        const baseName = formatRecordName(record);
+        const uniqueName = ensureUniqueName(baseName, nameTracker);
+        return {
+          index: index + 1,
+          sheetName: record.sheetName,
+          range: buildMacroRange(record),
+          tableName: uniqueName,
+          queryName: uniqueName
+        };
+      });
 
       const lines = [
         'Option Explicit',
@@ -2345,6 +2370,43 @@
         s: { r: record.headerRow, c: record.tableRange.c0 },
         e: { r: record.tableRange.r1, c: record.tableRange.c1 }
       });
+    }
+
+    function formatRecordName(record) {
+      const parts = [
+        record.department,
+        record.machineName,
+        record.timeframeLabel,
+        record.unitLabel
+      ].map((value) => sanitizeExcelName(value)).filter(Boolean);
+      let name = parts.join('_');
+      if (!name) name = 'ExtractedTable';
+      if (/^[0-9]/.test(name)) {
+        name = `T_${name}`;
+      }
+      return name.slice(0, 200);
+    }
+
+    function sanitizeExcelName(value) {
+      const text = String(value ?? '').trim();
+      if (!text) return '';
+      return text
+        .replace(/[\s]+/g, '_')
+        .replace(/[^A-Za-z0-9_]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    }
+
+    function ensureUniqueName(baseName, nameTracker) {
+      const key = baseName.toLowerCase();
+      const count = nameTracker.get(key) || 0;
+      if (count === 0) {
+        nameTracker.set(key, 1);
+        return baseName;
+      }
+      nameTracker.set(key, count + 1);
+      const suffix = `_${String(count + 1).padStart(2, '0')}`;
+      return `${baseName}${suffix}`.slice(0, 200);
     }
 
     function escapeVbaString(value) {
