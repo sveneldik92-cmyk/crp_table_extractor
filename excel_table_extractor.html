@@ -2278,6 +2278,7 @@
         "' and registers them as Power Query connections.",
         'Sub CreateQueriesFromExtractedTables()',
         '  Dim overlapCount As Long',
+        '  Dim skippedDetails As String',
         '  Dim specs() As String',
         '  Dim spec As Variant',
         '  Dim i As Long',
@@ -2303,13 +2304,18 @@
         lines.push(
           '',
           '  For Each spec In specs',
-          '    CreateQueryFromSpec CStr(spec), overlapCount',
+          '    CreateQueryFromSpec CStr(spec), overlapCount, skippedDetails',
           '  Next spec',
           ''
         );
         lines.push(
           '  If overlapCount > 0 Then',
-          '    MsgBox "Power Query connections created. " & overlapCount & " table(s) skipped due to overlapping ranges.", vbExclamation',
+          '    Dim detailMessage As String',
+          '    detailMessage = "Power Query connections created. " & overlapCount & " table(s) skipped due to overlapping ranges."',
+          '    If Len(skippedDetails) > 0 Then',
+          '      detailMessage = detailMessage & vbCrLf & "Skipped tables:" & skippedDetails',
+          '    End If',
+          '    MsgBox detailMessage, vbExclamation',
           '  Else',
           '    MsgBox "Power Query connections created for all detected tables.", vbInformation',
           '  End If'
@@ -2322,7 +2328,7 @@
         '  Application.ScreenUpdating = True',
         'End Sub',
         '',
-        'Private Sub CreateQueryFromSpec(ByVal spec As String, ByRef overlapCount As Long)',
+        'Private Sub CreateQueryFromSpec(ByVal spec As String, ByRef overlapCount As Long, ByRef skippedDetails As String)',
         '  Dim parts As Variant',
         '  Dim ws As Worksheet',
         '  Dim tbl As ListObject',
@@ -2353,6 +2359,7 @@
         '  Next existingTable',
         '  If overlapFound Then',
         '    overlapCount = overlapCount + 1',
+        '    skippedDetails = skippedDetails & vbCrLf & "- " & tableName & " (" & ws.Name & "!" & tableRange.Address(False, False) & ")"',
         '  Else',
         '    Set tbl = ws.ListObjects.Add(xlSrcRange, tableRange, , xlYes)',
         '    tbl.Name = tableName',
