@@ -907,9 +907,49 @@
         progressBar.style.width = `${Math.round(((index + 1) / totalSheets) * 100)}%`;
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
+      detectOverlappingTables();
       buildFacts();
       computeSummary();
       logEvent('info', `Extraction complete. ${state.tableRecords.length} target tables, ${state.nonTargetTables.length} quarantined.`);
+    }
+
+    function detectOverlappingTables() {
+      const overlapsById = new Map();
+      const bySheet = new Map();
+      state.tableRecords.forEach((record) => {
+        const list = bySheet.get(record.sheetName) || [];
+        list.push(record);
+        bySheet.set(record.sheetName, list);
+        overlapsById.set(record.id, []);
+      });
+
+      for (const [sheetName, records] of bySheet.entries()) {
+        for (let i = 0; i < records.length; i += 1) {
+          const recordA = records[i];
+          for (let j = i + 1; j < records.length; j += 1) {
+            const recordB = records[j];
+            if (rangesOverlap(recordA.tableRange, recordB.tableRange)) {
+              overlapsById.get(recordA.id).push(recordB.id);
+              overlapsById.get(recordB.id).push(recordA.id);
+              logEvent('error', `Overlapping tables detected on "${sheetName}": ${recordA.id} overlaps ${recordB.id}.`, {
+                sheetName,
+                tableA: recordA.id,
+                tableB: recordB.id,
+                rangeA: recordA.tableRange,
+                rangeB: recordB.tableRange
+              });
+            }
+          }
+        }
+      }
+
+      state.tableRecords.forEach((record) => {
+        record.overlapsWith = overlapsById.get(record.id) || [];
+      });
+    }
+
+    function rangesOverlap(a, b) {
+      return a.r0 <= b.r1 && a.r1 >= b.r0 && a.c0 <= b.c1 && a.c1 >= b.c0;
     }
 
     function buildMergeLookup(merges) {
@@ -2086,9 +2126,12 @@
         'Sub CreateQueriesFromExtractedTables()',
         '  Dim ws As Worksheet',
         '  Dim tbl As ListObject',
+        '  Dim existingTable As ListObject',
         '  Dim queryName As String',
         '  Dim tableName As String',
         '  Dim tableRange As Range',
+        '  Dim overlapFound As Boolean',
+        '  Dim overlapCount As Long',
         '',
         '  Application.ScreenUpdating = False',
         '  Application.DisplayAlerts = False',
@@ -2109,13 +2152,30 @@
             '  ws.ListObjects(tableName).Delete',
             '  ThisWorkbook.Queries(queryName).Delete',
             '  On Error GoTo 0',
-            '  Set tbl = ws.ListObjects.Add(xlSrcRange, tableRange, , xlYes)',
-            '  tbl.Name = tableName',
-            '  ThisWorkbook.Queries.Add Name:=queryName, Formula:="let Source = Excel.CurrentWorkbook(){[Name=""" & tableName & """]}[Content] in Source"',
+            '  overlapFound = False',
+            '  For Each existingTable In ws.ListObjects',
+            '    If Not Intersect(existingTable.Range, tableRange) Is Nothing Then',
+            '      overlapFound = True',
+            '      Exit For',
+            '    End If',
+            '  Next existingTable',
+            '  If overlapFound Then',
+            '    overlapCount = overlapCount + 1',
+            '  Else',
+            '    Set tbl = ws.ListObjects.Add(xlSrcRange, tableRange, , xlYes)',
+            '    tbl.Name = tableName',
+            '    ThisWorkbook.Queries.Add Name:=queryName, Formula:="let Source = Excel.CurrentWorkbook(){[Name=""" & tableName & """]}[Content] in Source"',
+            '  End If',
             ''
           );
         });
-        lines.push('  MsgBox "Power Query connections created for all detected tables.", vbInformation');
+        lines.push(
+          '  If overlapCount > 0 Then',
+          '    MsgBox "Power Query connections created. " & overlapCount & " table(s) skipped due to overlapping ranges.", vbExclamation',
+          '  Else',
+          '    MsgBox "Power Query connections created for all detected tables.", vbInformation',
+          '  End If'
+        );
       }
 
       lines.push(
