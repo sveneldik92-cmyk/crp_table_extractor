@@ -397,7 +397,7 @@
       background: #fff;
     }
 
-    .facts-table input[type="text"] {
+    .facts-table select {
       width: 100%;
       font-size: 0.75rem;
       padding: 4px 6px;
@@ -414,6 +414,31 @@
       word-break: break-word;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .facts-table th {
+      position: relative;
+    }
+
+    .resize-handle {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 6px;
+      height: 100%;
+      cursor: col-resize;
+      user-select: none;
+    }
+
+    .resize-handle::after {
+      content: "";
+      position: absolute;
+      top: 20%;
+      right: 2px;
+      width: 2px;
+      height: 60%;
+      background: #cbd5f5;
+      border-radius: 999px;
     }
 
     .pager {
@@ -505,6 +530,7 @@
       <div class="tabs">
         <button class="tab-button active" data-tab="report">Extraction report</button>
         <button class="tab-button" data-tab="facts">Facts table</button>
+        <button class="tab-button" data-tab="log">Full log</button>
       </div>
 
       <div id="tab-report" class="tab-panel active">
@@ -571,6 +597,12 @@
         </div>
         <div id="factsTableContainer" class="table-preview facts-table"></div>
       </div>
+
+      <div id="tab-log" class="tab-panel">
+        <h3 class="section-title">Extraction log</h3>
+        <p class="muted" id="logSummary"></p>
+        <pre id="logOutput" class="card" style="max-height: 520px; overflow: auto; white-space: pre-wrap;"></pre>
+      </div>
     </section>
   </main>
 
@@ -591,6 +623,7 @@
       detailScale: 1,
       factsSearch: '',
       factsColumnFilters: {},
+      factsColumnWidths: {},
       factsSort: {
         key: null,
         direction: 'asc'
@@ -618,6 +651,7 @@
     const tabButtons = document.querySelectorAll('.tab-button');
     const tabReport = document.getElementById('tab-report');
     const tabFacts = document.getElementById('tab-facts');
+    const tabLog = document.getElementById('tab-log');
     const factsSearch = document.getElementById('factsSearch');
     const factsPageSize = document.getElementById('factsPageSize');
     const clearFactsFilters = document.getElementById('clearFactsFilters');
@@ -626,6 +660,8 @@
     const factsPrev = document.getElementById('factsPrev');
     const factsNext = document.getElementById('factsNext');
     const factsPageStatus = document.getElementById('factsPageStatus');
+    const logOutput = document.getElementById('logOutput');
+    const logSummary = document.getElementById('logSummary');
 
     const filterDepartment = document.getElementById('filterDepartment');
     const filterMachine = document.getElementById('filterMachine');
@@ -695,8 +731,12 @@
         const tab = button.dataset.tab;
         tabReport.classList.toggle('active', tab === 'report');
         tabFacts.classList.toggle('active', tab === 'facts');
+        tabLog.classList.toggle('active', tab === 'log');
         if (tab === 'facts') {
           renderFactsTable();
+        }
+        if (tab === 'log') {
+          renderLog();
         }
       });
     });
@@ -762,6 +802,7 @@
       state.detailScale = 1;
       state.factsSearch = '';
       state.factsColumnFilters = {};
+      state.factsColumnWidths = {};
       state.factsSort = { key: null, direction: 'asc' };
       state.factsPagination = { page: 1, perPage: 250 };
       tableCards.innerHTML = '';
@@ -777,6 +818,8 @@
       factsPageSize.value = '250';
       factsTableContainer.innerHTML = '';
       factsRowCount.textContent = '';
+      logOutput.textContent = '';
+      logSummary.textContent = '';
     }
 
     async function runExtraction() {
@@ -901,7 +944,7 @@
       const tableKeyCol = candidate.c;
       const tableModuleCol = tableKeyCol + 1;
       const timeStartCol = tableKeyCol + 2;
-      const headerRowValues = collectTimeHeaders({ ws, grid, mergeInfo, rh, timeStartCol });
+      const headerRowValues = collectTimeHeaders({ ws, grid, mergeInfo, rh, timeStartCol, sheetName, tableKeyCol });
       const timeHeaders = headerRowValues.headers;
       const cEnd = headerRowValues.cEnd;
 
@@ -946,6 +989,7 @@
         return null;
       }
 
+      const tableId = `T-${sheetName}-${rh}-${tableKeyCol}`;
       const { rows, totalRow } = parseTableRows({
         ws,
         grid,
@@ -956,7 +1000,9 @@
         tableModuleCol,
         timeStartCol,
         timeHeaders,
-        cEnd
+        cEnd,
+        sheetName,
+        tableId
       });
 
       const qualityFlags = [];
@@ -965,7 +1011,7 @@
       if (totalRow) qualityFlags.push('Total row detected');
 
       const tableRecord = {
-        id: `T-${sheetName}-${rh}-${tableKeyCol}`,
+        id: tableId,
         department,
         sheetName,
         machineName: machineName || 'Unknown machine',
@@ -995,12 +1041,13 @@
       return { tableRecord, logEntry };
     }
 
-    function collectTimeHeaders({ ws, grid, mergeInfo, rh, timeStartCol }) {
+    function collectTimeHeaders({ ws, grid, mergeInfo, rh, timeStartCol, sheetName, tableKeyCol }) {
       const headers = [];
+      const headersByLabel = new Map();
+      const duplicates = [];
       let cEnd = timeStartCol;
       let emptyStreak = 0;
       let started = false;
-      const labelCounts = {};
       const maxWidth = timeStartCol + 250;
       for (let c = timeStartCol; c <= maxWidth; c += 1) {
         if (!mergeInfo.isMergeAnchor(rh, c) && mergeInfo.getMergeAnchor(rh, c)) {
@@ -1013,14 +1060,16 @@
             if (!started) continue;
             continue;
           }
-          let label = normalized;
-          if (labelCounts[label]) {
-            labelCounts[label] += 1;
-            label = `${label} (${labelCounts[label]})`;
+          const label = normalized;
+          if (headersByLabel.has(label)) {
+            const header = headersByLabel.get(label);
+            header.extraCols.push(c);
+            duplicates.push({ label, col: c, primaryCol: header.col });
           } else {
-            labelCounts[label] = 1;
+            const header = { label, col: c, extraCols: [] };
+            headersByLabel.set(label, header);
+            headers.push(header);
           }
-          headers.push({ label, col: c });
           cEnd = c;
           emptyStreak = 0;
           started = true;
@@ -1028,6 +1077,16 @@
           emptyStreak += 1;
           if (emptyStreak >= 2) break;
         }
+      }
+      if (duplicates.length) {
+        state.extractionLog.push({
+          level: 'error',
+          type: 'duplicate-time-header',
+          sheetName,
+          headerRow: rh,
+          tableKeyCol,
+          duplicates
+        });
       }
       return { headers: headers.filter((header) => header && header.label), cEnd };
     }
@@ -1149,7 +1208,20 @@
       return 'Unknown machine';
     }
 
-    function parseTableRows({ ws, grid, mergeInfo, rh, rEnd, tableKeyCol, tableModuleCol, timeStartCol, timeHeaders, cEnd }) {
+    function parseTableRows({
+      ws,
+      grid,
+      mergeInfo,
+      rh,
+      rEnd,
+      tableKeyCol,
+      tableModuleCol,
+      timeStartCol,
+      timeHeaders,
+      cEnd,
+      sheetName,
+      tableId
+    }) {
       const rows = [];
       let totalRow = null;
 
@@ -1161,7 +1233,27 @@
 
         for (const header of timeHeaders) {
           const timeLabel = header.label;
-          const value = getVisibleValue(ws, grid, mergeInfo, r, header.col);
+          let value = getVisibleValue(ws, grid, mergeInfo, r, header.col);
+          if (header.extraCols.length) {
+            header.extraCols.forEach((extraCol) => {
+              const extraValue = getVisibleValue(ws, grid, mergeInfo, r, extraCol);
+              if (!isEmptyValue(extraValue)) {
+                state.extractionLog.push({
+                  level: 'error',
+                  type: 'duplicate-time-value',
+                  sheetName,
+                  tableId,
+                  rowIndex: r,
+                  timeLabel,
+                  primaryCol: header.col,
+                  extraCol,
+                  primaryValue: value,
+                  extraValue
+                });
+                value = extraValue;
+              }
+            });
+          }
           const num = parseNumeric(value);
           if (num !== null) numericCount += 1;
           valuesByTime[timeLabel] = num;
@@ -1232,8 +1324,7 @@
               key: row.key,
               module: row.module,
               time,
-              value: row.valuesByTime[time],
-              isTotalRow: false
+              value: row.valuesByTime[time]
             });
           });
         });
@@ -1269,6 +1360,7 @@
       renderTables();
       renderQuarantine();
       renderExpectedShape();
+      renderLog();
     }
 
     function renderSummary() {
@@ -1426,12 +1518,11 @@
         { key: 'key', label: 'Key' },
         { key: 'module', label: 'Module' },
         { key: 'time', label: 'Time' },
-        { key: 'value', label: 'Value' },
-        { key: 'isTotalRow', label: 'Is total row' }
+        { key: 'value', label: 'Value' }
       ];
     }
 
-    function getFilteredFacts() {
+    function getBaseFilteredFacts() {
       const columns = getFactsColumns();
       const search = state.factsSearch.trim().toLowerCase();
       let rows = state.facts.filter((row) => {
@@ -1442,14 +1533,6 @@
         return true;
       });
 
-      rows = rows.filter((row) => {
-        return Object.entries(state.factsColumnFilters).every(([key, value]) => {
-          if (!value) return true;
-          const cell = row[key];
-          return String(cell ?? '').toLowerCase().includes(value.toLowerCase());
-        });
-      });
-
       if (search) {
         rows = rows.filter((row) => {
           return columns.some((column) => {
@@ -1458,6 +1541,23 @@
           });
         });
       }
+
+      return rows;
+    }
+
+    function applyColumnFilters(rows) {
+      return rows.filter((row) => {
+        return Object.entries(state.factsColumnFilters).every(([key, value]) => {
+          if (!value || value === 'All') return true;
+          const cell = row[key];
+          return String(cell ?? '') === value;
+        });
+      });
+    }
+
+    function getFilteredFacts() {
+      let rows = getBaseFilteredFacts();
+      rows = applyColumnFilters(rows);
 
       if (state.factsSort.key) {
         const { key, direction } = state.factsSort;
@@ -1478,6 +1578,21 @@
       return rows;
     }
 
+    function getFactsFilterOptions(rows, columns) {
+      const options = {};
+      columns.forEach((column) => {
+        const values = new Set();
+        rows.forEach((row) => {
+          const cell = row[column.key];
+          if (cell != null && String(cell).trim() !== '') {
+            values.add(String(cell));
+          }
+        });
+        options[column.key] = Array.from(values).sort((a, b) => a.localeCompare(b));
+      });
+      return options;
+    }
+
     function renderFactsTable() {
       if (!tabFacts.classList.contains('active')) {
         return;
@@ -1492,6 +1607,8 @@
       }
 
       const columns = getFactsColumns();
+      const baseRows = getBaseFilteredFacts();
+      const filterOptions = getFactsFilterOptions(baseRows, columns);
       const rows = getFilteredFacts();
       const totalRows = rows.length;
       const perPage = state.factsPagination.perPage;
@@ -1523,14 +1640,29 @@
 
       const tableHtml = `
         <table>
+          <colgroup>
+            ${columns.map((column) => {
+              const width = state.factsColumnWidths[column.key];
+              return `<col data-key="${column.key}" style="${width ? `width:${width}px;` : ''}" />`;
+            }).join('')}
+          </colgroup>
           <thead>
             <tr>
-              ${columns.map((column) => `<th data-sort="${column.key}">${column.label}${sortIndicator(column.key)}</th>`).join('')}
+              ${columns.map((column) => {
+                const width = state.factsColumnWidths[column.key];
+                const style = width ? ` style="width:${width}px;"` : '';
+                return `<th data-sort="${column.key}"${style}>${column.label}${sortIndicator(column.key)}<span class="resize-handle" data-resize="${column.key}"></span></th>`;
+              }).join('')}
             </tr>
             <tr class="filter-row">
               ${columns.map((column) => {
-                const value = state.factsColumnFilters[column.key] || '';
-                return `<th><input type="text" data-filter="${column.key}" value="${escapeHtml(value)}" placeholder="Filter..." /></th>`;
+                const value = state.factsColumnFilters[column.key] || 'All';
+                const options = ['All', ...filterOptions[column.key]];
+                const optionHtml = options.map((option) => {
+                  const selected = option === value ? 'selected' : '';
+                  return `<option value="${escapeHtml(option)}" ${selected}>${escapeHtml(option)}</option>`;
+                }).join('');
+                return `<th><select data-filter="${column.key}">${optionHtml}</select></th>`;
               }).join('')}
             </tr>
           </thead>
@@ -1546,10 +1678,10 @@
 
       factsTableContainer.innerHTML = tableHtml;
 
-      factsTableContainer.querySelectorAll('input[data-filter]').forEach((input) => {
-        input.addEventListener('input', (event) => {
+      factsTableContainer.querySelectorAll('select[data-filter]').forEach((select) => {
+        select.addEventListener('change', (event) => {
           const key = event.target.dataset.filter;
-          state.factsColumnFilters[key] = event.target.value || '';
+          state.factsColumnFilters[key] = event.target.value || 'All';
           state.factsPagination.page = 1;
           renderFactsTable();
         });
@@ -1567,6 +1699,62 @@
           renderFactsTable();
         });
       });
+
+      attachColumnResizers();
+    }
+
+    function attachColumnResizers() {
+      const table = factsTableContainer.querySelector('table');
+      if (!table) return;
+
+      const updateColumnWidth = (key, width) => {
+        const col = table.querySelector(`col[data-key="${key}"]`);
+        if (col) {
+          col.style.width = `${width}px`;
+        }
+        const header = table.querySelector(`th[data-sort="${key}"]`);
+        if (header) {
+          header.style.width = `${width}px`;
+        }
+      };
+
+      table.querySelectorAll('.resize-handle').forEach((handle) => {
+        handle.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const key = handle.dataset.resize;
+          const header = table.querySelector(`th[data-sort="${key}"]`);
+          const startWidth = header ? header.offsetWidth : 120;
+          const startX = event.clientX;
+          const minWidth = 80;
+
+          const onMouseMove = (moveEvent) => {
+            const delta = moveEvent.clientX - startX;
+            const nextWidth = Math.max(minWidth, startWidth + delta);
+            state.factsColumnWidths[key] = nextWidth;
+            updateColumnWidth(key, nextWidth);
+          };
+
+          const onMouseUp = () => {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+          };
+
+          document.addEventListener('mousemove', onMouseMove);
+          document.addEventListener('mouseup', onMouseUp);
+        });
+      });
+    }
+
+    function renderLog() {
+      if (!state.extractionLog.length) {
+        logSummary.textContent = 'No log entries available.';
+        logOutput.textContent = '';
+        return;
+      }
+      const errorCount = state.extractionLog.filter((entry) => entry.level === 'error').length;
+      logSummary.textContent = `${state.extractionLog.length} log entr${state.extractionLog.length === 1 ? 'y' : 'ies'} · ${errorCount} error${errorCount === 1 ? '' : 's'}`;
+      logOutput.textContent = JSON.stringify(state.extractionLog, null, 2);
     }
 
     function renderDetail(record) {
