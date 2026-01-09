@@ -736,9 +736,15 @@
       units: 4
     };
 
-    fileInput.addEventListener('change', () => {
-      runBtn.disabled = !fileInput.files.length;
-    });
+    const updateRunButtonState = () => {
+      const hasFile = (fileInput.files && fileInput.files.length > 0) || fileInput.value;
+      runBtn.disabled = !hasFile;
+    };
+
+    fileInput.addEventListener('change', updateRunButtonState);
+    fileInput.addEventListener('input', updateRunButtonState);
+    window.addEventListener('focus', updateRunButtonState);
+    updateRunButtonState();
 
     detailScale.addEventListener('input', (event) => {
       const scale = Number(event.target.value);
