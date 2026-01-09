@@ -500,7 +500,7 @@
         <button class="button" id="runBtn" disabled>Run extraction</button>
         <div class="progress"><span id="progressBar"></span></div>
         <div class="footer-actions">
-          <button class="button secondary" id="exportCsvBtn" disabled>Export Facts CSV</button>
+          <button class="button secondary" id="exportCsvBtn" disabled>Export Facts Workbook</button>
           <button class="button secondary" id="exportJsonBtn" disabled>Export JSON</button>
           <button class="button secondary" id="exportLogBtn" disabled>Export Log</button>
         </div>
@@ -776,9 +776,7 @@
     });
 
     exportCsvBtn.addEventListener('click', () => {
-      const rows = getFilteredFacts();
-      const csv = toCsv(rows, getFactsColumns());
-      downloadFile(csv, 'facts.csv', 'text/csv');
+      exportFactsWorkbook();
     });
 
     exportJsonBtn.addEventListener('click', () => {
@@ -906,6 +904,71 @@
         }
       }
       return String(value).trim();
+    }
+
+    function parseTimeLabel(value) {
+      if (value == null) return null;
+      const raw = String(value).trim();
+      if (!raw) return null;
+      const match = raw.match(/^(\d{4})\s*[.\-]?\s*Q([1-4])$/i);
+      if (match) {
+        return {
+          type: 'year-quarter',
+          year: Number(match[1]),
+          quarter: Number(match[2]),
+          raw
+        };
+      }
+      const yearOnly = raw.match(/^(\d{4})$/);
+      if (yearOnly) {
+        return {
+          type: 'year',
+          year: Number(yearOnly[1]),
+          quarter: 0,
+          raw
+        };
+      }
+      const dateValue = Date.parse(raw);
+      if (!Number.isNaN(dateValue)) {
+        const date = new Date(dateValue);
+        return {
+          type: 'date',
+          year: date.getUTCFullYear(),
+          quarter: Math.floor(date.getUTCMonth() / 3) + 1,
+          raw,
+          timestamp: dateValue
+        };
+      }
+      return { type: 'text', raw };
+    }
+
+    function compareTimeLabels(a, b) {
+      const parsedA = parseTimeLabel(a);
+      const parsedB = parseTimeLabel(b);
+      if (!parsedA && !parsedB) return 0;
+      if (!parsedA) return 1;
+      if (!parsedB) return -1;
+      const typeOrder = (type) => {
+        switch (type) {
+          case 'year':
+          case 'year-quarter':
+            return 0;
+          case 'date':
+            return 1;
+          default:
+            return 2;
+        }
+      };
+      const typeDiff = typeOrder(parsedA.type) - typeOrder(parsedB.type);
+      if (typeDiff !== 0) return typeDiff;
+      if (parsedA.type === 'date' && parsedB.type === 'date') {
+        if (parsedA.timestamp !== parsedB.timestamp) return parsedA.timestamp - parsedB.timestamp;
+      }
+      if ('year' in parsedA && 'year' in parsedB) {
+        if (parsedA.year !== parsedB.year) return parsedA.year - parsedB.year;
+        if (parsedA.quarter !== parsedB.quarter) return parsedA.quarter - parsedB.quarter;
+      }
+      return String(parsedA.raw).localeCompare(String(parsedB.raw));
     }
 
     function extractTablesFromSheet({ sheetName, ws, grid, mergeInfo }) {
@@ -1064,7 +1127,14 @@
         const value = getVisibleValue(ws, grid, mergeInfo, rh, c);
         if (!isEmptyValue(value)) {
           const normalized = normalizeHeaderTime(value);
-          if (/^(key|module)$/i.test(String(normalized))) {
+          const nextValue = getVisibleValue(ws, grid, mergeInfo, rh, c + 1);
+          const isKeyHeader = /^key$/i.test(String(normalized));
+          const isModuleHeader = /^module$/i.test(String(normalized));
+          const isNextModule = /^module$/i.test(String(nextValue || ''));
+          if ((isKeyHeader && isNextModule && started) || (isModuleHeader && started)) {
+            break;
+          }
+          if (isKeyHeader || isModuleHeader) {
             if (!started) continue;
             continue;
           }
@@ -1570,6 +1640,9 @@
           if (typeof aVal === 'number' && typeof bVal === 'number') {
             return (aVal - bVal) * factor;
           }
+          if (key === 'time') {
+            return compareTimeLabels(aVal, bVal) * factor;
+          }
           return String(aVal).localeCompare(String(bVal)) * factor;
         });
       }
@@ -1587,7 +1660,12 @@
             values.add(String(cell));
           }
         });
-        options[column.key] = Array.from(values).sort((a, b) => a.localeCompare(b));
+        options[column.key] = Array.from(values).sort((a, b) => {
+          if (column.key === 'time') {
+            return compareTimeLabels(a, b);
+          }
+          return a.localeCompare(b);
+        });
       });
       return options;
     }
@@ -1812,6 +1890,106 @@
           </table>
         </div>
       `;
+    }
+
+    function exportFactsWorkbook() {
+      const rows = state.facts;
+      const columns = getFactsColumns();
+      const headers = columns.map((column) => column.key);
+      const factsSheet = XLSX.utils.json_to_sheet(rows, { header: headers });
+      const pivotSheet = buildPivotSheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, factsSheet, 'Facts');
+      XLSX.utils.book_append_sheet(workbook, pivotSheet, 'Pivot');
+      const output = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+      downloadFile(output, 'facts.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    }
+
+    function buildPivotSheet(rows) {
+      const timeValues = Array.from(new Set(rows.map((row) => row.time).filter((time) => time != null)))
+        .map((time) => String(time))
+        .sort(compareTimeLabels);
+      const pivotRows = new Map();
+
+      rows.forEach((row) => {
+        const department = row.department ?? '';
+        const machine = row.machine ?? '';
+        const timeframe = row.timeframeLabel ?? '';
+        const unit = row.unitLabel ?? '';
+        const key = row.key ?? '';
+        const module = row.module ?? '';
+        const mapKey = `${department}||${machine}||${timeframe}||${unit}||${key}||${module}`;
+        if (!pivotRows.has(mapKey)) {
+          pivotRows.set(mapKey, {
+            department,
+            machine,
+            timeframe,
+            unit,
+            key,
+            module,
+            valuesByTime: new Map()
+          });
+        }
+        const entry = pivotRows.get(mapKey);
+        const timeKey = row.time == null ? '' : String(row.time);
+        if (!timeKey) return;
+        const value = parseNumeric(row.value);
+        if (value == null) return;
+        const current = entry.valuesByTime.get(timeKey) || 0;
+        entry.valuesByTime.set(timeKey, current + value);
+      });
+
+      const header = ['Department', 'Machine', 'Timeframe', 'Unit', 'Key', 'Module', ...timeValues];
+      const rowsArray = Array.from(pivotRows.values()).sort((a, b) => {
+        return [
+          ['department', a.department, b.department],
+          ['machine', a.machine, b.machine],
+          ['timeframe', a.timeframe, b.timeframe],
+          ['unit', a.unit, b.unit],
+          ['key', a.key, b.key],
+          ['module', a.module, b.module]
+        ].reduce((acc, [, left, right]) => {
+          if (acc !== 0) return acc;
+          return String(left).localeCompare(String(right));
+        }, 0);
+      });
+
+      const aoa = [header];
+      rowsArray.forEach((entry) => {
+        const row = [
+          entry.department,
+          entry.machine,
+          entry.timeframe,
+          entry.unit,
+          entry.key,
+          entry.module,
+          ...timeValues.map((time) => {
+            const value = entry.valuesByTime.get(time);
+            if (value == null) return '';
+            return Math.round(value * 10) / 10;
+          })
+        ];
+        aoa.push(row);
+      });
+
+      const sheet = XLSX.utils.aoa_to_sheet(aoa);
+      if (aoa.length) {
+        sheet['!autofilter'] = {
+          ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: 3 } })
+        };
+      }
+
+      for (let r = 1; r < aoa.length; r += 1) {
+        for (let c = 6; c < header.length; c += 1) {
+          const address = XLSX.utils.encode_cell({ r, c });
+          const cell = sheet[address];
+          if (cell && typeof cell.v === 'number') {
+            cell.z = '0.0';
+          }
+        }
+      }
+
+      return sheet;
     }
 
     function toCsv(rows, columns = null) {
