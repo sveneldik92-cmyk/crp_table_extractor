@@ -736,15 +736,9 @@
       units: 4
     };
 
-    const updateRunButtonState = () => {
-      const hasFile = (fileInput.files && fileInput.files.length > 0) || fileInput.value;
-      runBtn.disabled = !hasFile;
-    };
-
-    fileInput.addEventListener('change', updateRunButtonState);
-    fileInput.addEventListener('input', updateRunButtonState);
-    window.addEventListener('focus', updateRunButtonState);
-    updateRunButtonState();
+    fileInput.addEventListener('change', () => {
+      runBtn.disabled = !fileInput.files.length;
+    });
 
     detailScale.addEventListener('input', (event) => {
       const scale = Number(event.target.value);
@@ -1433,15 +1427,11 @@
       return 'Unknown machine';
     }
 
-    function containsFte(value) {
-      return /fte/i.test(String(value ?? ''));
-    }
-
     function shouldSkipRowByKeyCell(value) {
       const text = String(value ?? '').trim();
       if (!text) return true;
       if (text.startsWith('*')) return true;
-      if (containsFte(text)) return true;
+      if (/fte/i.test(text)) return true;
       return false;
     }
 
@@ -1501,9 +1491,6 @@
 
         const keyText = key ? String(key) : '';
         const moduleText = module ? String(module) : '';
-        if (containsFte(keyText) || containsFte(moduleText)) {
-          continue;
-        }
         const looksTotal = /total|sum|totaal/i.test(keyText) || /total|sum|totaal/i.test(moduleText);
         const fillRatio = timeHeaders.length ? numericCount / timeHeaders.length : 0;
         if (looksTotal || (r === rEnd && fillRatio > 0.6)) {
@@ -2279,11 +2266,7 @@
           sheetName: record.sheetName,
           range: buildMacroRange(record),
           tableName: uniqueName,
-          queryName: uniqueName,
-          department: record.department,
-          machineName: record.machineName,
-          timeframeLabel: record.timeframeLabel,
-          unitLabel: record.unitLabel
+          queryName: uniqueName
         };
       });
 
@@ -2295,7 +2278,6 @@
         "' and registers them as Power Query connections.",
         'Sub CreateQueriesFromExtractedTables()',
         '  Dim overlapCount As Long',
-        '  Dim skippedTables As String',
         '  Dim specs() As String',
         '  Dim spec As Variant',
         '  Dim i As Long',
@@ -2314,24 +2296,20 @@
             escapeVbaString(record.sheetName),
             escapeVbaString(record.range),
             escapeVbaString(record.tableName),
-            escapeVbaString(record.queryName),
-            escapeVbaString(record.department),
-            escapeVbaString(record.machineName),
-            escapeVbaString(record.timeframeLabel),
-            escapeVbaString(record.unitLabel)
+            escapeVbaString(record.queryName)
           ].join('|');
           lines.push(`  specs(${index}) = "${spec}"`);
         });
         lines.push(
           '',
           '  For Each spec In specs',
-          '    CreateQueryFromSpec CStr(spec), overlapCount, skippedTables',
+          '    CreateQueryFromSpec CStr(spec), overlapCount',
           '  Next spec',
           ''
         );
         lines.push(
           '  If overlapCount > 0 Then',
-          '    MsgBox "Power Query connections created. " & overlapCount & " table(s) skipped due to overlapping ranges:" & vbCrLf & skippedTables, vbExclamation',
+          '    MsgBox "Power Query connections created. " & overlapCount & " table(s) skipped due to overlapping ranges.", vbExclamation',
           '  Else',
           '    MsgBox "Power Query connections created for all detected tables.", vbInformation',
           '  End If'
@@ -2344,7 +2322,7 @@
         '  Application.ScreenUpdating = True',
         'End Sub',
         '',
-        'Private Sub CreateQueryFromSpec(ByVal spec As String, ByRef overlapCount As Long, ByRef skippedTables As String)',
+        'Private Sub CreateQueryFromSpec(ByVal spec As String, ByRef overlapCount As Long)',
         '  Dim parts As Variant',
         '  Dim ws As Worksheet',
         '  Dim tbl As ListObject',
@@ -2353,24 +2331,14 @@
         '  Dim tableName As String',
         '  Dim tableRange As Range',
         '  Dim overlapFound As Boolean',
-        '  Dim department As String',
-        '  Dim machineName As String',
-        '  Dim timeframeLabel As String',
-        '  Dim unitLabel As String',
-        '  Dim tableLabel As String',
         '',
         '  parts = Split(spec, "|")',
-        '  If UBound(parts) < 7 Then Exit Sub',
+        '  If UBound(parts) < 3 Then Exit Sub',
         '',
         '  Set ws = ThisWorkbook.Worksheets(CStr(parts(0)))',
         '  ws.Activate',
         '  tableName = CStr(parts(2))',
         '  queryName = CStr(parts(3))',
-        '  department = CStr(parts(4))',
-        '  machineName = CStr(parts(5))',
-        '  timeframeLabel = CStr(parts(6))',
-        '  unitLabel = CStr(parts(7))',
-        '  tableLabel = ws.Name & "!" & CStr(parts(1)) & " (" & tableName & ")",
         '  Set tableRange = ws.Range(CStr(parts(1)))',
         '  On Error Resume Next',
         '  ws.ListObjects(tableName).Delete',
@@ -2385,20 +2353,10 @@
         '  Next existingTable',
         '  If overlapFound Then',
         '    overlapCount = overlapCount + 1',
-        '    If Len(skippedTables) > 0 Then',
-        '      skippedTables = skippedTables & vbCrLf',
-        '    End If',
-        '    skippedTables = skippedTables & tableLabel',
         '  Else',
         '    Set tbl = ws.ListObjects.Add(xlSrcRange, tableRange, , xlYes)',
         '    tbl.Name = tableName',
-        '    ThisWorkbook.Queries.Add Name:=queryName, Formula:="let Source = Excel.CurrentWorkbook(){[Name=""" & tableName & """]}[Content], " & _',
-        '      "AddDepartment = Table.AddColumn(Source, ""Department"", each """ & department & """), " & _',
-        '      "AddMachine = Table.AddColumn(AddDepartment, ""Machine"", each """ & machineName & """), " & _',
-        '      "AddTimeframe = Table.AddColumn(AddMachine, ""Timeframe"", each """ & timeframeLabel & """), " & _',
-        '      "AddUnit = Table.AddColumn(AddTimeframe, ""Unit"", each """ & unitLabel & """), " & _',
-        '      "Reordered = Table.ReorderColumns(AddUnit, {""Department"", ""Machine"", ""Timeframe"", ""Unit""} & List.RemoveItems(Table.ColumnNames(AddUnit), {""Department"", ""Machine"", ""Timeframe"", ""Unit""})) " & _',
-        '      "in Reordered"',
+        '    ThisWorkbook.Queries.Add Name:=queryName, Formula:="let Source = Excel.CurrentWorkbook(){[Name=""" & tableName & """]}[Content] in Source"',
         '  End If',
         'End Sub',
         ''
