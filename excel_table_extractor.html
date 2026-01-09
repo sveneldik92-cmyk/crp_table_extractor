@@ -1472,8 +1472,19 @@
     function shouldSkipRowByKeyCell(value) {
       const text = String(value ?? '').trim();
       if (!text) return true;
-      if (text.startsWith('*')) return true;
-      if (/fte/i.test(text)) return true;
+      return false;
+    }
+
+    function isAsteriskKey(value) {
+      const text = String(value ?? '').trim();
+      return text.startsWith('*');
+    }
+
+    function containsFteText(value) {
+      if (value == null) return false;
+      if (typeof value === 'string') {
+        return /fte/i.test(value);
+      }
       return false;
     }
 
@@ -1499,14 +1510,21 @@
         const key = getVisibleValue(ws, grid, mergeInfo, r, tableKeyCol);
         const module = getVisibleValue(ws, grid, mergeInfo, r, tableModuleCol);
         const valuesByTime = {};
+        let hasFteText = containsFteText(key) || containsFteText(module);
         let numericCount = 0;
 
         for (const header of timeHeaders) {
           const timeLabel = header.label;
           let value = getVisibleValue(ws, grid, mergeInfo, r, header.col);
+          if (containsFteText(value)) {
+            hasFteText = true;
+          }
           if (header.extraCols.length) {
             header.extraCols.forEach((extraCol) => {
               const extraValue = getVisibleValue(ws, grid, mergeInfo, r, extraCol);
+              if (containsFteText(extraValue)) {
+                hasFteText = true;
+              }
               if (!isEmptyValue(extraValue)) {
                 logEvent('error', `Duplicate time value for "${timeLabel}" in ${tableId} (row ${r}).`, {
                   sheetName,
@@ -1534,8 +1552,9 @@
         const keyText = key ? String(key) : '';
         const moduleText = module ? String(module) : '';
         const looksTotal = /total|sum|totaal/i.test(keyText) || /total|sum|totaal/i.test(moduleText);
+        const looksFteSummary = isAsteriskKey(keyText) || hasFteText;
         const fillRatio = timeHeaders.length ? numericCount / timeHeaders.length : 0;
-        if (looksTotal || (r === rEnd && fillRatio > 0.6)) {
+        if (looksTotal || looksFteSummary || (r === rEnd && fillRatio > 0.6)) {
           row.isTotalRow = true;
           totalRow = row;
           if (rows.length) {
