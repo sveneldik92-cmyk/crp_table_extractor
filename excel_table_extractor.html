@@ -602,8 +602,11 @@
             <h3 class="section-title">Target tables</h3>
             <div class="table-selection-controls">
               <span class="muted" id="tableSelectionCount">No tables selected.</span>
+              <input id="tableSearch" type="text" placeholder="Search tables..." />
               <button class="button secondary small" id="selectAllTables" type="button">Select all</button>
               <button class="button secondary small" id="selectNoneTables" type="button">Select none</button>
+              <button class="button secondary small" id="selectFilteredTables" type="button">Select visible</button>
+              <button class="button secondary small" id="clearFilteredTables" type="button">Clear visible</button>
             </div>
             <div id="tableCards" class="stack"></div>
           </div>
@@ -699,6 +702,7 @@
       overlapPairs: [],
       summary: null,
       selectedTableIds: new Set(),
+      tableSearch: '',
       filters: {
         department: 'All',
         machine: 'All',
@@ -730,8 +734,11 @@
     const tableCards = document.getElementById('tableCards');
     const quarantineCards = document.getElementById('quarantineCards');
     const tableSelectionCount = document.getElementById('tableSelectionCount');
+    const tableSearch = document.getElementById('tableSearch');
     const selectAllTables = document.getElementById('selectAllTables');
     const selectNoneTables = document.getElementById('selectNoneTables');
+    const selectFilteredTables = document.getElementById('selectFilteredTables');
+    const clearFilteredTables = document.getElementById('clearFilteredTables');
     const detailView = document.getElementById('detailView');
     const expectedShape = document.getElementById('expectedShape');
     const detailScale = document.getElementById('detailScale');
@@ -900,6 +907,27 @@
       updateSelectionState();
     });
 
+    selectFilteredTables.addEventListener('click', () => {
+      const filtered = state.tableRecords.filter((record) => filterRecord(record) && filterSearchRecord(record));
+      filtered.forEach((record) => {
+        state.selectedTableIds.add(record.id);
+      });
+      updateSelectionState();
+    });
+
+    clearFilteredTables.addEventListener('click', () => {
+      const filtered = state.tableRecords.filter((record) => filterRecord(record) && filterSearchRecord(record));
+      filtered.forEach((record) => {
+        state.selectedTableIds.delete(record.id);
+      });
+      updateSelectionState();
+    });
+
+    tableSearch.addEventListener('input', (event) => {
+      state.tableSearch = event.target.value || '';
+      renderTables();
+    });
+
     function resetState() {
       state.tableRecords = [];
       state.facts = [];
@@ -915,6 +943,7 @@
       state.factsColumnWidths = {};
       state.factsSort = { key: null, direction: 'asc' };
       state.factsPagination = { page: 1, perPage: 250 };
+      state.tableSearch = '';
       tableCards.innerHTML = '';
       quarantineCards.innerHTML = '';
       tableSelectionCount.textContent = 'No tables selected.';
@@ -930,6 +959,7 @@
       factsRowCount.textContent = '';
       logOutput.textContent = '';
       logSummary.textContent = '';
+      tableSearch.value = '';
     }
 
     function logEvent(level, message, context = null) {
@@ -1842,8 +1872,24 @@
       return true;
     }
 
+    function filterSearchRecord(record) {
+      const term = state.tableSearch.trim().toLowerCase();
+      if (!term) return true;
+      const haystack = [
+        record.id,
+        record.department,
+        record.machineName,
+        record.timeframeLabel,
+        record.unitLabel
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(term);
+    }
+
     function renderTables() {
-      const filtered = state.tableRecords.filter(filterRecord);
+      const filtered = state.tableRecords.filter((record) => filterRecord(record) && filterSearchRecord(record));
       const selectedCount = state.selectedTableIds.size;
       tableSelectionCount.textContent = selectedCount
         ? `${selectedCount} of ${state.tableRecords.length} tables selected for integration.`
@@ -2445,7 +2491,40 @@
         lines.push(...queryFormulaLines);
         lines.push(
           `  ThisWorkbook.Queries.Add Name:="${queryName}", Formula:=queryFormula`,
-          `  MsgBox "Combined Power Query '${queryName}' created with ${sanitizedRecords.length} table(s).", vbInformation`
+          '',
+          '  Dim outputSheet As Worksheet',
+          '  Dim outputTable As ListObject',
+          '  Dim outputRange As Range',
+          '',
+          '  On Error Resume Next',
+          `  Set outputSheet = ThisWorkbook.Worksheets("${queryName}")`,
+          '  On Error GoTo 0',
+          '  If outputSheet Is Nothing Then',
+          '    Set outputSheet = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))',
+          `    outputSheet.Name = "${queryName}"`,
+          '  Else',
+          '    outputSheet.Cells.Clear',
+          '  End If',
+          '',
+          '  Set outputRange = outputSheet.Range("A1")',
+          '  On Error Resume Next',
+          `  Set outputTable = outputSheet.ListObjects("${queryName}")`,
+          '  If Not outputTable Is Nothing Then',
+          '    outputTable.Delete',
+          '  End If',
+          '  On Error GoTo 0',
+          '',
+          '  Set outputTable = outputSheet.ListObjects.Add(SourceType:=0, Source:= _',
+          `    "OLEDB;Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;Location=${queryName};Extended Properties="""";", _`,
+          '    Destination:=outputRange)',
+          `  outputTable.Name = "${queryName}"`,
+          '  With outputTable.QueryTable',
+          '    .CommandType = xlCmdSql',
+          `    .CommandText = "SELECT * FROM [${queryName}]"`,
+          '    .Refresh BackgroundQuery:=False',
+          '  End With',
+          '',
+          `  MsgBox "Combined Power Query '${queryName}' created and loaded to the '${queryName}' sheet.", vbInformation`
         );
       }
 
@@ -2485,8 +2564,10 @@
         '  },',
         '  Combined = Table.Combine(Tables),',
         '  Reordered = Table.ReorderColumns(Combined, {"Department", "Machine", "Timeframe", "Unit", "Key", "Module"}, MissingField.Ignore),',
-        '  Unpivoted = Table.UnpivotOtherColumns(Reordered, {"Department", "Machine", "Timeframe", "Unit", "Key", "Module"}, "Time", "Value"),',
-        '  Final = Table.ReorderColumns(Unpivoted, {"Department", "Machine", "Timeframe", "Unit", "Key", "Module", "Time", "Value"}, MissingField.Ignore)',
+        '  Removed = Table.RemoveColumns(Reordered, {"Column17", "Efficiency per Work Center"}, MissingField.Ignore),',
+        '  Unpivoted = Table.UnpivotOtherColumns(Removed, {"Department", "Machine", "Timeframe", "Unit", "Key", "Module"}, "Attribute", "Value"),',
+        '  Renamed = Table.RenameColumns(Unpivoted, {{"Attribute", "Time"}}, MissingField.Ignore),',
+        '  Final = Table.ReorderColumns(Renamed, {"Department", "Machine", "Timeframe", "Unit", "Key", "Module", "Time", "Value"}, MissingField.Ignore)',
         'in',
         '  Final'
       ];
