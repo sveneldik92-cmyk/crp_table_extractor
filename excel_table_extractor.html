@@ -467,6 +467,32 @@
       background: var(--danger);
       color: #fff;
     }
+
+    .pivot-summary-grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+
+    .pivot-tree {
+      list-style: disc;
+      margin: 0;
+      padding-left: 20px;
+      color: var(--muted);
+    }
+
+    .pivot-tree li {
+      margin: 6px 0;
+    }
+
+    .pivot-tree .pivot-label {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .pivot-tree .pivot-subtle {
+      font-weight: 500;
+    }
   </style>
 </head>
 <body>
@@ -1528,30 +1554,100 @@
         pivotSummary.innerHTML = '<p class="muted">Run extraction to see the pivot summary.</p>';
         return;
       }
-      const countBy = (key) => {
-        const counts = new Map();
-        state.tableRecords.forEach((record) => {
-          const value = record[key] ?? 'Unknown';
-          counts.set(value, (counts.get(value) || 0) + 1);
-        });
-        return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+      const pivot = new Map();
+      const ensureMap = (map, key) => {
+        if (!map.has(key)) map.set(key, new Map());
+        return map.get(key);
       };
-      const renderList = (title, entries) => `
-        <div class="card">
-          <h4>${title}</h4>
-          <ul class="muted">
-            ${entries.map(([label, count]) => `<li>${label}: ${count}</li>`).join('')}
-          </ul>
-        </div>
+      state.tableRecords.forEach((record) => {
+        const department = record.department ?? 'Unknown department';
+        const machine = record.machineName ?? 'Unknown machine';
+        const timeframe = record.timeframeLabel ?? 'Unknown timeframe';
+        const unit = record.unitLabel ?? 'Unknown unit';
+        const machineMap = ensureMap(pivot, department);
+        const timeframeMap = ensureMap(machineMap, machine);
+        const unitMap = ensureMap(timeframeMap, timeframe);
+        unitMap.set(unit, (unitMap.get(unit) || 0) + 1);
+      });
+
+      const sumMap = (map) => {
+        let total = 0;
+        map.forEach((value) => {
+          if (value instanceof Map) {
+            total += sumMap(value);
+          } else {
+            total += value;
+          }
+        });
+        return total;
+      };
+
+      const sortEntries = (entries) => {
+        return entries.sort((a, b) => {
+          const aTotal = a[1] instanceof Map ? sumMap(a[1]) : a[1];
+          const bTotal = b[1] instanceof Map ? sumMap(b[1]) : b[1];
+          if (bTotal !== aTotal) return bTotal - aTotal;
+          return String(a[0]).localeCompare(String(b[0]));
+        });
+      };
+
+      const renderCount = (count) => `
+        <span class="count-badge ${count > 1 ? 'alert' : ''}">${count}</span>
       `;
+
+      const renderUnits = (unitMap) => {
+        const units = sortEntries(Array.from(unitMap.entries()));
+        return `
+          <ul class="pivot-tree">
+            ${units.map(([unit, count]) => `
+              <li><span class="pivot-subtle">${unit}</span> ${renderCount(count)}</li>
+            `).join('')}
+          </ul>
+        `;
+      };
+
+      const renderTimeframes = (timeframeMap) => {
+        const timeframes = sortEntries(Array.from(timeframeMap.entries()));
+        return `
+          <ul class="pivot-tree">
+            ${timeframes.map(([timeframe, unitMap]) => `
+              <li>
+                <span class="pivot-label">${timeframe}</span>
+                ${renderUnits(unitMap)}
+              </li>
+            `).join('')}
+          </ul>
+        `;
+      };
+
+      const renderMachines = (machineMap) => {
+        const machines = sortEntries(Array.from(machineMap.entries()));
+        return `
+          <ul class="pivot-tree">
+            ${machines.map(([machine, timeframeMap]) => `
+              <li>
+                <span class="pivot-label">${machine}</span>
+                ${renderTimeframes(timeframeMap)}
+              </li>
+            `).join('')}
+          </ul>
+        `;
+      };
+
+      const renderDepartments = () => {
+        const departments = sortEntries(Array.from(pivot.entries()));
+        return departments.map(([department, machineMap]) => `
+          <div class="card">
+            <h4>${department}</h4>
+            ${renderMachines(machineMap)}
+          </div>
+        `).join('');
+      };
       const totalFacts = state.facts.length;
       const totalRows = state.tableRecords.reduce((sum, record) => sum + record.rows.length, 0);
       pivotSummary.innerHTML = `
-        <div class="two-col">
-          ${renderList('Departments', countBy('department'))}
-          ${renderList('Machines', countBy('machineName'))}
-          ${renderList('Timeframes', countBy('timeframeLabel'))}
-          ${renderList('Units', countBy('unitLabel'))}
+        <div class="pivot-summary-grid">
+          ${renderDepartments()}
         </div>
         <p class="muted small">Totals: ${state.tableRecords.length} tables · ${totalRows} data rows · ${totalFacts} fact values.</p>
       `;
