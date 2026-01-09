@@ -2124,14 +2124,9 @@
         "' This macro creates Excel tables for each detected range",
         "' and registers them as Power Query connections.",
         'Sub CreateQueriesFromExtractedTables()',
-        '  Dim ws As Worksheet',
-        '  Dim tbl As ListObject',
-        '  Dim existingTable As ListObject',
-        '  Dim queryName As String',
-        '  Dim tableName As String',
-        '  Dim tableRange As Range',
-        '  Dim overlapFound As Boolean',
         '  Dim overlapCount As Long',
+        '  Dim specs As Variant',
+        '  Dim spec As Variant',
         '',
         '  Application.ScreenUpdating = False',
         '  Application.DisplayAlerts = False',
@@ -2141,34 +2136,25 @@
       if (!sanitizedRecords.length) {
         lines.push('  MsgBox "No tables detected. Run the extractor first.", vbExclamation');
       } else {
-        sanitizedRecords.forEach((record) => {
-          lines.push(
-            `  Set ws = ThisWorkbook.Worksheets("${escapeVbaString(record.sheetName)}")`,
-            '  ws.Activate',
-            `  tableName = "${record.tableName}"`,
-            `  queryName = "${record.queryName}"`,
-            `  Set tableRange = ws.Range("${record.range}")`,
-            '  On Error Resume Next',
-            '  ws.ListObjects(tableName).Delete',
-            '  ThisWorkbook.Queries(queryName).Delete',
-            '  On Error GoTo 0',
-            '  overlapFound = False',
-            '  For Each existingTable In ws.ListObjects',
-            '    If Not Intersect(existingTable.Range, tableRange) Is Nothing Then',
-            '      overlapFound = True',
-            '      Exit For',
-            '    End If',
-            '  Next existingTable',
-            '  If overlapFound Then',
-            '    overlapCount = overlapCount + 1',
-            '  Else',
-            '    Set tbl = ws.ListObjects.Add(xlSrcRange, tableRange, , xlYes)',
-            '    tbl.Name = tableName',
-            '    ThisWorkbook.Queries.Add Name:=queryName, Formula:="let Source = Excel.CurrentWorkbook(){[Name=""" & tableName & """]}[Content] in Source"',
-            '  End If',
-            ''
-          );
+        lines.push('  specs = Array( _');
+        sanitizedRecords.forEach((record, index) => {
+          const suffix = index === sanitizedRecords.length - 1 ? '' : ', _';
+          const spec = [
+            escapeVbaString(record.sheetName),
+            escapeVbaString(record.range),
+            escapeVbaString(record.tableName),
+            escapeVbaString(record.queryName)
+          ].join('|');
+          lines.push(`    "${spec}"${suffix}`);
         });
+        lines.push(
+          '  )',
+          '',
+          '  For Each spec In specs',
+          '    CreateQueryFromSpec CStr(spec), overlapCount',
+          '  Next spec',
+          ''
+        );
         lines.push(
           '  If overlapCount > 0 Then',
           '    MsgBox "Power Query connections created. " & overlapCount & " table(s) skipped due to overlapping ranges.", vbExclamation',
@@ -2182,6 +2168,44 @@
         '',
         '  Application.DisplayAlerts = True',
         '  Application.ScreenUpdating = True',
+        'End Sub',
+        '',
+        'Private Sub CreateQueryFromSpec(ByVal spec As String, ByRef overlapCount As Long)',
+        '  Dim parts As Variant',
+        '  Dim ws As Worksheet',
+        '  Dim tbl As ListObject',
+        '  Dim existingTable As ListObject',
+        '  Dim queryName As String',
+        '  Dim tableName As String',
+        '  Dim tableRange As Range',
+        '  Dim overlapFound As Boolean',
+        '',
+        '  parts = Split(spec, "|")',
+        '  If UBound(parts) < 3 Then Exit Sub',
+        '',
+        '  Set ws = ThisWorkbook.Worksheets(CStr(parts(0)))',
+        '  ws.Activate',
+        '  tableName = CStr(parts(2))',
+        '  queryName = CStr(parts(3))',
+        '  Set tableRange = ws.Range(CStr(parts(1)))',
+        '  On Error Resume Next',
+        '  ws.ListObjects(tableName).Delete',
+        '  ThisWorkbook.Queries(queryName).Delete',
+        '  On Error GoTo 0',
+        '  overlapFound = False',
+        '  For Each existingTable In ws.ListObjects',
+        '    If Not Intersect(existingTable.Range, tableRange) Is Nothing Then',
+        '      overlapFound = True',
+        '      Exit For',
+        '    End If',
+        '  Next existingTable',
+        '  If overlapFound Then',
+        '    overlapCount = overlapCount + 1',
+        '  Else',
+        '    Set tbl = ws.ListObjects.Add(xlSrcRange, tableRange, , xlYes)',
+        '    tbl.Name = tableName',
+        '    ThisWorkbook.Queries.Add Name:=queryName, Formula:="let Source = Excel.CurrentWorkbook(){[Name=""" & tableName & """]}[Content] in Source"',
+        '  End If',
         'End Sub',
         ''
       );
