@@ -546,11 +546,6 @@
           </div>
 
           <div>
-            <h3 class="section-title">Pivot summary</h3>
-            <div id="pivotSummary" class="card"></div>
-          </div>
-
-          <div>
             <h3 class="section-title">Target tables</h3>
             <div id="tableCards" class="stack"></div>
           </div>
@@ -641,7 +636,6 @@
     const exportLogBtn = document.getElementById('exportLogBtn');
     const progressBar = document.getElementById('progressBar');
     const summaryStats = document.getElementById('summaryStats');
-    const pivotSummary = document.getElementById('pivotSummary');
     const tableCards = document.getElementById('tableCards');
     const quarantineCards = document.getElementById('quarantineCards');
     const detailView = document.getElementById('detailView');
@@ -808,7 +802,6 @@
       quarantineCards.innerHTML = '';
       detailView.innerHTML = '<p class="muted">Select a table to see details.</p>';
       summaryStats.innerHTML = '';
-      pivotSummary.innerHTML = '';
       progressBar.style.width = '0%';
       detailScale.value = '1';
       detailScaleValue.textContent = '100%';
@@ -884,6 +877,10 @@
 
     function isEmptyValue(value) {
       return value == null || (typeof value === 'string' && value.trim() === '');
+    }
+
+    function normalizeHeaderText(value) {
+      return String(value ?? '').trim().toLowerCase();
     }
 
     function getVisibleValue(ws, grid, mergeInfo, r, c) {
@@ -1017,6 +1014,9 @@
       const tableKeyCol = candidate.c;
       const tableModuleCol = tableKeyCol + 1;
       const timeStartCol = tableKeyCol + 2;
+      const headerKey = normalizeHeaderText(getVisibleValue(ws, grid, mergeInfo, rh, tableKeyCol));
+      const headerModule = normalizeHeaderText(getVisibleValue(ws, grid, mergeInfo, rh, tableModuleCol));
+      const topLeftValue = rh > 0 ? getVisibleValue(ws, grid, mergeInfo, rh - 1, tableKeyCol) : null;
       const headerRowValues = collectTimeHeaders({ ws, grid, mergeInfo, rh, timeStartCol, sheetName, tableKeyCol });
       const timeHeaders = headerRowValues.headers;
       const cEnd = headerRowValues.cEnd;
@@ -1032,6 +1032,8 @@
       const dataRows = dataScan.dataRows;
 
       const reasons = [];
+      if (!isEmptyValue(topLeftValue)) reasons.push('top-left cell not blank');
+      if (headerKey !== 'key' || headerModule !== 'module') reasons.push('missing key/module header row');
       if (!unitLabel || !timeframeLabel) reasons.push('missing metadata labels');
       if (timeHeaders.length < 2) reasons.push('time headers too short');
       if (dataRows.length === 0) reasons.push('no data rows');
@@ -1252,7 +1254,9 @@
       const keyValue = getVisibleValue(ws, grid, mergeInfo, r, tableKeyCol);
       const moduleValue = getVisibleValue(ws, grid, mergeInfo, r, tableModuleCol);
       const thirdValue = getVisibleValue(ws, grid, mergeInfo, r, timeStartCol);
-      return /^key$/i.test(String(keyValue || '')) && /^module$/i.test(String(moduleValue || '')) && !isEmptyValue(thirdValue);
+      return normalizeHeaderText(keyValue) === 'key'
+        && normalizeHeaderText(moduleValue) === 'module'
+        && !isEmptyValue(thirdValue);
     }
 
     function countRowValues({ ws, grid, mergeInfo, r, c0, c1 }) {
@@ -1282,6 +1286,14 @@
       return 'Unknown machine';
     }
 
+    function shouldSkipRowByKeyCell(value) {
+      const text = String(value ?? '').trim();
+      if (!text) return true;
+      if (text.startsWith('*')) return true;
+      if (/fte/i.test(text)) return true;
+      return false;
+    }
+
     function parseTableRows({
       ws,
       grid,
@@ -1302,6 +1314,9 @@
       for (let r = rh + 1; r <= rEnd; r += 1) {
         const key = getVisibleValue(ws, grid, mergeInfo, r, tableKeyCol);
         const module = getVisibleValue(ws, grid, mergeInfo, r, tableModuleCol);
+        if (shouldSkipRowByKeyCell(key)) {
+          continue;
+        }
         const valuesByTime = {};
         let numericCount = 0;
 
@@ -1424,7 +1439,6 @@
 
     function renderAll() {
       renderSummary();
-      renderPivot();
       renderFilters();
       renderTables();
       renderQuarantine();
@@ -1453,39 +1467,6 @@
     function renderExpectedShape() {
       const expectedTables = EXPECTED.departments * EXPECTED.machines * EXPECTED.timeframes * EXPECTED.units;
       expectedShape.textContent = `Expected roughly ${EXPECTED.departments} departments × ${EXPECTED.machines} machines × ${EXPECTED.timeframes} timeframes × ${EXPECTED.units} units = ${expectedTables} tables. Detected ${state.tableRecords.length} target tables.`;
-    }
-
-    function renderPivot() {
-      if (!state.tableRecords.length) {
-        pivotSummary.innerHTML = '<p class="muted">No target tables detected.</p>';
-        return;
-      }
-      const pivot = {};
-      state.tableRecords.forEach((record) => {
-        pivot[record.department] = pivot[record.department] || {};
-        pivot[record.department][record.machineName] = pivot[record.department][record.machineName] || {};
-        const timeframe = pivot[record.department][record.machineName];
-        timeframe[record.timeframeLabel] = timeframe[record.timeframeLabel] || {};
-        timeframe[record.timeframeLabel][record.unitLabel] = (timeframe[record.timeframeLabel][record.unitLabel] || 0) + 1;
-      });
-
-      const html = Object.entries(pivot).map(([dept, machines]) => {
-        const machineHtml = Object.entries(machines).map(([machine, timeframes]) => {
-          const timeframeHtml = Object.entries(timeframes).map(([timeframe, units]) => {
-            const unitHtml = Object.entries(units).map(([unit, count]) => `
-              <li>
-                ${unit}
-                <span class="count-badge ${count === 1 ? '' : 'alert'}">${count} table${count === 1 ? '' : 's'}</span>
-              </li>
-            `).join('');
-            return `<li><strong>${timeframe}</strong><ul>${unitHtml}</ul></li>`;
-          }).join('');
-          return `<li><strong>${machine}</strong><ul>${timeframeHtml}</ul></li>`;
-        }).join('');
-        return `<div><strong>${dept}</strong><ul>${machineHtml}</ul></div>`;
-      }).join('');
-
-      pivotSummary.innerHTML = `<div class="two-col">${html}</div>`;
     }
 
     function renderFilters() {
@@ -1897,99 +1878,10 @@
       const columns = getFactsColumns();
       const headers = columns.map((column) => column.key);
       const factsSheet = XLSX.utils.json_to_sheet(rows, { header: headers });
-      const pivotSheet = buildPivotSheet(rows);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, factsSheet, 'Facts');
-      XLSX.utils.book_append_sheet(workbook, pivotSheet, 'Pivot');
       const output = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
       downloadFile(output, 'facts.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    }
-
-    function buildPivotSheet(rows) {
-      const timeValues = Array.from(new Set(rows.map((row) => row.time).filter((time) => time != null)))
-        .map((time) => String(time))
-        .sort(compareTimeLabels);
-      const pivotRows = new Map();
-
-      rows.forEach((row) => {
-        const department = row.department ?? '';
-        const machine = row.machine ?? '';
-        const timeframe = row.timeframeLabel ?? '';
-        const unit = row.unitLabel ?? '';
-        const key = row.key ?? '';
-        const module = row.module ?? '';
-        const mapKey = `${department}||${machine}||${timeframe}||${unit}||${key}||${module}`;
-        if (!pivotRows.has(mapKey)) {
-          pivotRows.set(mapKey, {
-            department,
-            machine,
-            timeframe,
-            unit,
-            key,
-            module,
-            valuesByTime: new Map()
-          });
-        }
-        const entry = pivotRows.get(mapKey);
-        const timeKey = row.time == null ? '' : String(row.time);
-        if (!timeKey) return;
-        const value = parseNumeric(row.value);
-        if (value == null) return;
-        const current = entry.valuesByTime.get(timeKey) || 0;
-        entry.valuesByTime.set(timeKey, current + value);
-      });
-
-      const header = ['Department', 'Machine', 'Timeframe', 'Unit', 'Key', 'Module', ...timeValues];
-      const rowsArray = Array.from(pivotRows.values()).sort((a, b) => {
-        return [
-          ['department', a.department, b.department],
-          ['machine', a.machine, b.machine],
-          ['timeframe', a.timeframe, b.timeframe],
-          ['unit', a.unit, b.unit],
-          ['key', a.key, b.key],
-          ['module', a.module, b.module]
-        ].reduce((acc, [, left, right]) => {
-          if (acc !== 0) return acc;
-          return String(left).localeCompare(String(right));
-        }, 0);
-      });
-
-      const aoa = [header];
-      rowsArray.forEach((entry) => {
-        const row = [
-          entry.department,
-          entry.machine,
-          entry.timeframe,
-          entry.unit,
-          entry.key,
-          entry.module,
-          ...timeValues.map((time) => {
-            const value = entry.valuesByTime.get(time);
-            if (value == null) return '';
-            return Math.round(value * 10) / 10;
-          })
-        ];
-        aoa.push(row);
-      });
-
-      const sheet = XLSX.utils.aoa_to_sheet(aoa);
-      if (aoa.length) {
-        sheet['!autofilter'] = {
-          ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: 3 } })
-        };
-      }
-
-      for (let r = 1; r < aoa.length; r += 1) {
-        for (let c = 6; c < header.length; c += 1) {
-          const address = XLSX.utils.encode_cell({ r, c });
-          const cell = sheet[address];
-          if (cell && typeof cell.v === 'number') {
-            cell.z = '0.0';
-          }
-        }
-      }
-
-      return sheet;
     }
 
     function toCsv(rows, columns = null) {
