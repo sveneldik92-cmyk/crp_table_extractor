@@ -629,6 +629,9 @@
         const tab = button.dataset.tab;
         tabReport.classList.toggle('active', tab === 'report');
         tabFacts.classList.toggle('active', tab === 'facts');
+        if (tab === 'facts') {
+          renderFactsTable();
+        }
       });
     });
 
@@ -706,21 +709,24 @@
 
     function buildMergeLookup(merges) {
       const anchorToRange = new Map();
-      const mergedCells = [];
+      const cellToAnchor = new Map();
       merges.forEach((range) => {
         const key = `${range.s.r},${range.s.c}`;
         anchorToRange.set(key, range);
-        mergedCells.push(range);
+        for (let r = range.s.r; r <= range.e.r; r += 1) {
+          for (let c = range.s.c; c <= range.e.c; c += 1) {
+            cellToAnchor.set(`${r},${c}`, { ar: range.s.r, ac: range.s.c });
+          }
+        }
       });
       return {
         anchorToRange,
         getMergeAnchor(r, c) {
-          for (const range of mergedCells) {
-            if (r >= range.s.r && r <= range.e.r && c >= range.s.c && c <= range.e.c) {
-              return { ar: range.s.r, ac: range.s.c };
-            }
-          }
-          return null;
+          return cellToAnchor.get(`${r},${c}`) || null;
+        },
+        isMergeAnchor(r, c) {
+          const anchor = cellToAnchor.get(`${r},${c}`);
+          return anchor ? anchor.ar === r && anchor.ac === c : false;
         }
       };
     }
@@ -909,6 +915,9 @@
       const labelCounts = {};
       const maxWidth = timeStartCol + 250;
       for (let c = timeStartCol; c <= maxWidth; c += 1) {
+        if (!mergeInfo.isMergeAnchor(rh, c) && mergeInfo.getMergeAnchor(rh, c)) {
+          continue;
+        }
         const value = getVisibleValue(ws, grid, mergeInfo, rh, c);
         if (!isEmptyValue(value)) {
           const normalized = normalizeHeaderTime(value);
@@ -1000,6 +1009,9 @@
       for (let r = rh + 1; r <= maxHeight; r += 1) {
         const keyValue = getVisibleValue(ws, grid, mergeInfo, r, tableKeyCol);
         const moduleValue = getVisibleValue(ws, grid, mergeInfo, r, tableModuleCol);
+        if (isHeaderRow({ ws, grid, mergeInfo, r, tableKeyCol, tableModuleCol, timeStartCol }) && r > rh + 1) {
+          break;
+        }
         const valueFill = countRowValues({ ws, grid, mergeInfo, r, timeStartCol, cEnd });
         const isRowEmpty = isEmptyValue(keyValue) && isEmptyValue(moduleValue) && valueFill === 0;
 
@@ -1013,6 +1025,13 @@
         }
       }
       return { dataRows, rEnd };
+    }
+
+    function isHeaderRow({ ws, grid, mergeInfo, r, tableKeyCol, tableModuleCol, timeStartCol }) {
+      const keyValue = getVisibleValue(ws, grid, mergeInfo, r, tableKeyCol);
+      const moduleValue = getVisibleValue(ws, grid, mergeInfo, r, tableModuleCol);
+      const thirdValue = getVisibleValue(ws, grid, mergeInfo, r, timeStartCol);
+      return /^key$/i.test(String(keyValue || '')) && /^module$/i.test(String(moduleValue || '')) && !isEmptyValue(thirdValue);
     }
 
     function countRowValues({ ws, grid, mergeInfo, r, c0, c1 }) {
@@ -1130,21 +1149,6 @@
             });
           });
         });
-        if (record.totalRow) {
-          record.times.forEach((time) => {
-            state.facts.push({
-              department: record.department,
-              machine: record.machineName,
-              timeframeLabel: record.timeframeLabel,
-              unitLabel: record.unitLabel,
-              key: record.totalRow.key,
-              module: record.totalRow.module,
-              time,
-              value: record.totalRow.valuesByTime[time],
-              isTotalRow: true
-            });
-          });
-        }
       });
     }
 
@@ -1177,7 +1181,6 @@
       renderTables();
       renderQuarantine();
       renderExpectedShape();
-      renderFactsTable();
     }
 
     function renderSummary() {
@@ -1383,6 +1386,9 @@
     }
 
     function renderFactsTable() {
+      if (!tabFacts.classList.contains('active')) {
+        return;
+      }
       if (!state.facts.length) {
         factsTableContainer.innerHTML = '<p class="muted">Run extraction to see the facts table.</p>';
         factsRowCount.textContent = '';
