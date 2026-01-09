@@ -402,6 +402,46 @@
       font-size: 0.75rem;
       padding: 4px 6px;
     }
+
+    .facts-table table {
+      width: 100%;
+      table-layout: fixed;
+    }
+
+    .facts-table th,
+    .facts-table td {
+      white-space: normal;
+      word-break: break-word;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .pager {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .button.small {
+      padding: 6px 12px;
+      font-size: 0.75rem;
+    }
+
+    .count-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .count-badge.alert {
+      background: var(--danger);
+      color: #fff;
+    }
   </style>
 </head>
 <body>
@@ -512,7 +552,21 @@
             <label for="factsSearch">Search across all columns</label>
             <input id="factsSearch" type="text" placeholder="Type to filter..." />
           </div>
+          <div class="input-group" style="min-width: 180px;">
+            <label for="factsPageSize">Rows per page</label>
+            <select id="factsPageSize">
+              <option value="100">100</option>
+              <option value="250" selected>250</option>
+              <option value="500">500</option>
+              <option value="1000">1000</option>
+            </select>
+          </div>
           <button class="button secondary" id="clearFactsFilters">Clear filters</button>
+          <div class="pager">
+            <button class="button secondary small" id="factsPrev">Prev</button>
+            <span class="muted small" id="factsPageStatus"></span>
+            <button class="button secondary small" id="factsNext">Next</button>
+          </div>
           <span class="muted" id="factsRowCount"></span>
         </div>
         <div id="factsTableContainer" class="table-preview facts-table"></div>
@@ -540,6 +594,10 @@
       factsSort: {
         key: null,
         direction: 'asc'
+      },
+      factsPagination: {
+        page: 1,
+        perPage: 250
       }
     };
 
@@ -561,9 +619,13 @@
     const tabReport = document.getElementById('tab-report');
     const tabFacts = document.getElementById('tab-facts');
     const factsSearch = document.getElementById('factsSearch');
+    const factsPageSize = document.getElementById('factsPageSize');
     const clearFactsFilters = document.getElementById('clearFactsFilters');
     const factsRowCount = document.getElementById('factsRowCount');
     const factsTableContainer = document.getElementById('factsTableContainer');
+    const factsPrev = document.getElementById('factsPrev');
+    const factsNext = document.getElementById('factsNext');
+    const factsPageStatus = document.getElementById('factsPageStatus');
 
     const filterDepartment = document.getElementById('filterDepartment');
     const filterMachine = document.getElementById('filterMachine');
@@ -603,21 +665,25 @@
 
     filterDepartment.addEventListener('change', () => {
       state.filters.department = filterDepartment.value;
+      state.factsPagination.page = 1;
       renderTables();
       renderFactsTable();
     });
     filterMachine.addEventListener('change', () => {
       state.filters.machine = filterMachine.value;
+      state.factsPagination.page = 1;
       renderTables();
       renderFactsTable();
     });
     filterTimeframe.addEventListener('change', () => {
       state.filters.timeframe = filterTimeframe.value;
+      state.factsPagination.page = 1;
       renderTables();
       renderFactsTable();
     });
     filterUnit.addEventListener('change', () => {
       state.filters.unit = filterUnit.value;
+      state.factsPagination.page = 1;
       renderTables();
       renderFactsTable();
     });
@@ -637,6 +703,13 @@
 
     factsSearch.addEventListener('input', (event) => {
       state.factsSearch = event.target.value || '';
+      state.factsPagination.page = 1;
+      renderFactsTable();
+    });
+
+    factsPageSize.addEventListener('change', (event) => {
+      state.factsPagination.perPage = Number(event.target.value) || 250;
+      state.factsPagination.page = 1;
       renderFactsTable();
     });
 
@@ -644,7 +717,20 @@
       state.factsSearch = '';
       state.factsColumnFilters = {};
       state.factsSort = { key: null, direction: 'asc' };
+      state.factsPagination.page = 1;
       factsSearch.value = '';
+      renderFactsTable();
+    });
+
+    factsPrev.addEventListener('click', () => {
+      if (state.factsPagination.page > 1) {
+        state.factsPagination.page -= 1;
+        renderFactsTable();
+      }
+    });
+
+    factsNext.addEventListener('click', () => {
+      state.factsPagination.page += 1;
       renderFactsTable();
     });
 
@@ -677,6 +763,7 @@
       state.factsSearch = '';
       state.factsColumnFilters = {};
       state.factsSort = { key: null, direction: 'asc' };
+      state.factsPagination = { page: 1, perPage: 250 };
       tableCards.innerHTML = '';
       quarantineCards.innerHTML = '';
       detailView.innerHTML = '<p class="muted">Select a table to see details.</p>';
@@ -687,6 +774,7 @@
       detailScaleValue.textContent = '100%';
       document.documentElement.style.setProperty('--detail-scale', '1');
       factsSearch.value = '';
+      factsPageSize.value = '250';
       factsTableContainer.innerHTML = '';
       factsRowCount.textContent = '';
     }
@@ -1223,7 +1311,12 @@
       const html = Object.entries(pivot).map(([dept, machines]) => {
         const machineHtml = Object.entries(machines).map(([machine, timeframes]) => {
           const timeframeHtml = Object.entries(timeframes).map(([timeframe, units]) => {
-            const unitHtml = Object.entries(units).map(([unit, count]) => `<li>${unit}: ${count}</li>`).join('');
+            const unitHtml = Object.entries(units).map(([unit, count]) => `
+              <li>
+                ${unit}
+                <span class="count-badge ${count === 1 ? '' : 'alert'}">${count} table${count === 1 ? '' : 's'}</span>
+              </li>
+            `).join('');
             return `<li><strong>${timeframe}</strong><ul>${unitHtml}</ul></li>`;
           }).join('');
           return `<li><strong>${machine}</strong><ul>${timeframeHtml}</ul></li>`;
@@ -1392,12 +1485,27 @@
       if (!state.facts.length) {
         factsTableContainer.innerHTML = '<p class="muted">Run extraction to see the facts table.</p>';
         factsRowCount.textContent = '';
+        factsPageStatus.textContent = '';
+        factsPrev.disabled = true;
+        factsNext.disabled = true;
         return;
       }
 
       const columns = getFactsColumns();
       const rows = getFilteredFacts();
-      factsRowCount.textContent = `${rows.length} row${rows.length === 1 ? '' : 's'} shown`;
+      const totalRows = rows.length;
+      const perPage = state.factsPagination.perPage;
+      const totalPages = Math.max(1, Math.ceil(totalRows / perPage));
+      if (state.factsPagination.page > totalPages) {
+        state.factsPagination.page = totalPages;
+      }
+      const page = state.factsPagination.page;
+      const startIndex = (page - 1) * perPage;
+      const pageRows = rows.slice(startIndex, startIndex + perPage);
+      factsRowCount.textContent = `${pageRows.length} of ${totalRows} row${totalRows === 1 ? '' : 's'} shown`;
+      factsPageStatus.textContent = `Page ${page} of ${totalPages}`;
+      factsPrev.disabled = page <= 1;
+      factsNext.disabled = page >= totalPages;
 
       const sortIndicator = (key) => {
         if (state.factsSort.key !== key) return '';
@@ -1427,7 +1535,7 @@
             </tr>
           </thead>
           <tbody>
-            ${rows.map((row) => `
+            ${pageRows.map((row) => `
               <tr>
                 ${columns.map((column) => `<td>${escapeHtml(row[column.key] ?? '')}</td>`).join('')}
               </tr>
@@ -1442,6 +1550,7 @@
         input.addEventListener('input', (event) => {
           const key = event.target.dataset.filter;
           state.factsColumnFilters[key] = event.target.value || '';
+          state.factsPagination.page = 1;
           renderFactsTable();
         });
       });
