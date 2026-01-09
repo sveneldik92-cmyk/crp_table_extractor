@@ -341,6 +341,67 @@
     .small {
       font-size: 0.8rem;
     }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .tab-button {
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--muted);
+      padding: 8px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .tab-button.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: transparent;
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    .facts-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .facts-table {
+      max-height: 520px;
+    }
+
+    .facts-table thead th {
+      position: sticky;
+      top: 0;
+      background: #f1f5f9;
+      z-index: 1;
+    }
+
+    .facts-table thead tr.filter-row th {
+      top: 32px;
+      background: #fff;
+    }
+
+    .facts-table input[type="text"] {
+      width: 100%;
+      font-size: 0.75rem;
+      padding: 4px 6px;
+    }
   </style>
 </head>
 <body>
@@ -400,40 +461,61 @@
       </div>
     </section>
 
-    <section class="panel report-grid">
-      <div>
-        <h3 class="section-title">Extraction Summary</h3>
-        <div id="summaryStats" class="stat-grid"></div>
+    <section class="panel">
+      <div class="tabs">
+        <button class="tab-button active" data-tab="report">Extraction report</button>
+        <button class="tab-button" data-tab="facts">Facts table</button>
       </div>
 
-      <div>
-        <h3 class="section-title">Expected-shape sanity check</h3>
-        <p class="muted" id="expectedShape"></p>
-      </div>
+      <div id="tab-report" class="tab-panel active">
+        <div class="report-grid">
+          <div>
+            <h3 class="section-title">Extraction Summary</h3>
+            <div id="summaryStats" class="stat-grid"></div>
+          </div>
 
-      <div>
-        <h3 class="section-title">Pivot summary</h3>
-        <div id="pivotSummary" class="card"></div>
-      </div>
+          <div>
+            <h3 class="section-title">Expected-shape sanity check</h3>
+            <p class="muted" id="expectedShape"></p>
+          </div>
 
-      <div>
-        <h3 class="section-title">Target tables</h3>
-        <div id="tableCards" class="stack"></div>
-      </div>
+          <div>
+            <h3 class="section-title">Pivot summary</h3>
+            <div id="pivotSummary" class="card"></div>
+          </div>
 
-      <div>
-        <h3 class="section-title">Non-target tables (quarantine)</h3>
-        <div id="quarantineCards" class="stack"></div>
-      </div>
+          <div>
+            <h3 class="section-title">Target tables</h3>
+            <div id="tableCards" class="stack"></div>
+          </div>
 
-      <div>
-        <h3 class="section-title">Detail view</h3>
-        <div class="detail-controls">
-          <label for="detailScale" class="small">Zoom</label>
-          <input id="detailScale" type="range" min="0.6" max="1.6" step="0.1" value="1" />
-          <span id="detailScaleValue">100%</span>
+          <div>
+            <h3 class="section-title">Non-target tables (quarantine)</h3>
+            <div id="quarantineCards" class="stack"></div>
+          </div>
+
+          <div>
+            <h3 class="section-title">Detail view</h3>
+            <div class="detail-controls">
+              <label for="detailScale" class="small">Zoom</label>
+              <input id="detailScale" type="range" min="0.6" max="1.6" step="0.1" value="1" />
+              <span id="detailScaleValue">100%</span>
+            </div>
+            <div id="detailView" class="card"></div>
+          </div>
         </div>
-        <div id="detailView" class="card"></div>
+      </div>
+
+      <div id="tab-facts" class="tab-panel">
+        <div class="facts-controls">
+          <div class="input-group" style="min-width: 220px;">
+            <label for="factsSearch">Search across all columns</label>
+            <input id="factsSearch" type="text" placeholder="Type to filter..." />
+          </div>
+          <button class="button secondary" id="clearFactsFilters">Clear filters</button>
+          <span class="muted" id="factsRowCount"></span>
+        </div>
+        <div id="factsTableContainer" class="table-preview facts-table"></div>
       </div>
     </section>
   </main>
@@ -452,7 +534,13 @@
         timeframe: 'All',
         unit: 'All'
       },
-      detailScale: 1
+      detailScale: 1,
+      factsSearch: '',
+      factsColumnFilters: {},
+      factsSort: {
+        key: null,
+        direction: 'asc'
+      }
     };
 
     const fileInput = document.getElementById('fileInput');
@@ -469,6 +557,13 @@
     const expectedShape = document.getElementById('expectedShape');
     const detailScale = document.getElementById('detailScale');
     const detailScaleValue = document.getElementById('detailScaleValue');
+    const tabButtons = document.querySelectorAll('.tab-button');
+    const tabReport = document.getElementById('tab-report');
+    const tabFacts = document.getElementById('tab-facts');
+    const factsSearch = document.getElementById('factsSearch');
+    const clearFactsFilters = document.getElementById('clearFactsFilters');
+    const factsRowCount = document.getElementById('factsRowCount');
+    const factsTableContainer = document.getElementById('factsTableContainer');
 
     const filterDepartment = document.getElementById('filterDepartment');
     const filterMachine = document.getElementById('filterMachine');
@@ -509,22 +604,50 @@
     filterDepartment.addEventListener('change', () => {
       state.filters.department = filterDepartment.value;
       renderTables();
+      renderFactsTable();
     });
     filterMachine.addEventListener('change', () => {
       state.filters.machine = filterMachine.value;
       renderTables();
+      renderFactsTable();
     });
     filterTimeframe.addEventListener('change', () => {
       state.filters.timeframe = filterTimeframe.value;
       renderTables();
+      renderFactsTable();
     });
     filterUnit.addEventListener('change', () => {
       state.filters.unit = filterUnit.value;
       renderTables();
+      renderFactsTable();
+    });
+
+    tabButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        tabButtons.forEach((btn) => btn.classList.remove('active'));
+        button.classList.add('active');
+        const tab = button.dataset.tab;
+        tabReport.classList.toggle('active', tab === 'report');
+        tabFacts.classList.toggle('active', tab === 'facts');
+      });
+    });
+
+    factsSearch.addEventListener('input', (event) => {
+      state.factsSearch = event.target.value || '';
+      renderFactsTable();
+    });
+
+    clearFactsFilters.addEventListener('click', () => {
+      state.factsSearch = '';
+      state.factsColumnFilters = {};
+      state.factsSort = { key: null, direction: 'asc' };
+      factsSearch.value = '';
+      renderFactsTable();
     });
 
     exportCsvBtn.addEventListener('click', () => {
-      const csv = toCsv(state.facts);
+      const rows = getFilteredFacts();
+      const csv = toCsv(rows, getFactsColumns());
       downloadFile(csv, 'facts.csv', 'text/csv');
     });
 
@@ -548,6 +671,9 @@
       state.extractionLog = [];
       state.summary = null;
       state.detailScale = 1;
+      state.factsSearch = '';
+      state.factsColumnFilters = {};
+      state.factsSort = { key: null, direction: 'asc' };
       tableCards.innerHTML = '';
       quarantineCards.innerHTML = '';
       detailView.innerHTML = '<p class="muted">Select a table to see details.</p>';
@@ -557,6 +683,9 @@
       detailScale.value = '1';
       detailScaleValue.textContent = '100%';
       document.documentElement.style.setProperty('--detail-scale', '1');
+      factsSearch.value = '';
+      factsTableContainer.innerHTML = '';
+      factsRowCount.textContent = '';
     }
 
     async function runExtraction() {
@@ -751,7 +880,7 @@
         tableRange,
         headerRange,
         detectedAt: new Date().toISOString(),
-        times: timeHeaders,
+        times: timeHeaders.map((header) => header.label),
         rows,
         totalRow,
         qualityFlags
@@ -776,19 +905,34 @@
       const headers = [];
       let cEnd = timeStartCol;
       let emptyStreak = 0;
+      let started = false;
+      const labelCounts = {};
       const maxWidth = timeStartCol + 250;
       for (let c = timeStartCol; c <= maxWidth; c += 1) {
         const value = getVisibleValue(ws, grid, mergeInfo, rh, c);
         if (!isEmptyValue(value)) {
-          headers.push(normalizeHeaderTime(value));
+          const normalized = normalizeHeaderTime(value);
+          if (/^(key|module)$/i.test(String(normalized))) {
+            if (!started) continue;
+            continue;
+          }
+          let label = normalized;
+          if (labelCounts[label]) {
+            labelCounts[label] += 1;
+            label = `${label} (${labelCounts[label]})`;
+          } else {
+            labelCounts[label] = 1;
+          }
+          headers.push({ label, col: c });
           cEnd = c;
           emptyStreak = 0;
-        } else {
+          started = true;
+        } else if (started) {
           emptyStreak += 1;
           if (emptyStreak >= 2) break;
         }
       }
-      return { headers: headers.filter(Boolean), cEnd };
+      return { headers: headers.filter((header) => header && header.label), cEnd };
     }
 
     function extractMetadata({ ws, grid, mergeInfo, rh, tableKeyCol, timeStartCol }) {
@@ -908,9 +1052,9 @@
         const valuesByTime = {};
         let numericCount = 0;
 
-        for (let c = timeStartCol; c <= cEnd; c += 1) {
-          const timeLabel = timeHeaders[c - timeStartCol];
-          const value = getVisibleValue(ws, grid, mergeInfo, r, c);
+        for (const header of timeHeaders) {
+          const timeLabel = header.label;
+          const value = getVisibleValue(ws, grid, mergeInfo, r, header.col);
           const num = parseNumeric(value);
           if (num !== null) numericCount += 1;
           valuesByTime[timeLabel] = num;
@@ -1033,6 +1177,7 @@
       renderTables();
       renderQuarantine();
       renderExpectedShape();
+      renderFactsTable();
     }
 
     function renderSummary() {
@@ -1176,6 +1321,139 @@
       });
     }
 
+    function getFactsColumns() {
+      return [
+        { key: 'department', label: 'Department' },
+        { key: 'machine', label: 'Machine' },
+        { key: 'timeframeLabel', label: 'Timeframe' },
+        { key: 'unitLabel', label: 'Unit' },
+        { key: 'key', label: 'Key' },
+        { key: 'module', label: 'Module' },
+        { key: 'time', label: 'Time' },
+        { key: 'value', label: 'Value' },
+        { key: 'isTotalRow', label: 'Is total row' }
+      ];
+    }
+
+    function getFilteredFacts() {
+      const columns = getFactsColumns();
+      const search = state.factsSearch.trim().toLowerCase();
+      let rows = state.facts.filter((row) => {
+        if (state.filters.department !== 'All' && row.department !== state.filters.department) return false;
+        if (state.filters.machine !== 'All' && row.machine !== state.filters.machine) return false;
+        if (state.filters.timeframe !== 'All' && row.timeframeLabel !== state.filters.timeframe) return false;
+        if (state.filters.unit !== 'All' && row.unitLabel !== state.filters.unit) return false;
+        return true;
+      });
+
+      rows = rows.filter((row) => {
+        return Object.entries(state.factsColumnFilters).every(([key, value]) => {
+          if (!value) return true;
+          const cell = row[key];
+          return String(cell ?? '').toLowerCase().includes(value.toLowerCase());
+        });
+      });
+
+      if (search) {
+        rows = rows.filter((row) => {
+          return columns.some((column) => {
+            const cell = row[column.key];
+            return String(cell ?? '').toLowerCase().includes(search);
+          });
+        });
+      }
+
+      if (state.factsSort.key) {
+        const { key, direction } = state.factsSort;
+        const factor = direction === 'asc' ? 1 : -1;
+        rows = [...rows].sort((a, b) => {
+          const aVal = a[key];
+          const bVal = b[key];
+          if (aVal == null && bVal == null) return 0;
+          if (aVal == null) return 1;
+          if (bVal == null) return -1;
+          if (typeof aVal === 'number' && typeof bVal === 'number') {
+            return (aVal - bVal) * factor;
+          }
+          return String(aVal).localeCompare(String(bVal)) * factor;
+        });
+      }
+
+      return rows;
+    }
+
+    function renderFactsTable() {
+      if (!state.facts.length) {
+        factsTableContainer.innerHTML = '<p class="muted">Run extraction to see the facts table.</p>';
+        factsRowCount.textContent = '';
+        return;
+      }
+
+      const columns = getFactsColumns();
+      const rows = getFilteredFacts();
+      factsRowCount.textContent = `${rows.length} row${rows.length === 1 ? '' : 's'} shown`;
+
+      const sortIndicator = (key) => {
+        if (state.factsSort.key !== key) return '';
+        return state.factsSort.direction === 'asc' ? ' ▲' : ' ▼';
+      };
+
+      const escapeHtml = (value) => {
+        return String(value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      };
+
+      const tableHtml = `
+        <table>
+          <thead>
+            <tr>
+              ${columns.map((column) => `<th data-sort="${column.key}">${column.label}${sortIndicator(column.key)}</th>`).join('')}
+            </tr>
+            <tr class="filter-row">
+              ${columns.map((column) => {
+                const value = state.factsColumnFilters[column.key] || '';
+                return `<th><input type="text" data-filter="${column.key}" value="${escapeHtml(value)}" placeholder="Filter..." /></th>`;
+              }).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                ${columns.map((column) => `<td>${escapeHtml(row[column.key] ?? '')}</td>`).join('')}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+
+      factsTableContainer.innerHTML = tableHtml;
+
+      factsTableContainer.querySelectorAll('input[data-filter]').forEach((input) => {
+        input.addEventListener('input', (event) => {
+          const key = event.target.dataset.filter;
+          state.factsColumnFilters[key] = event.target.value || '';
+          renderFactsTable();
+        });
+      });
+
+      factsTableContainer.querySelectorAll('th[data-sort]').forEach((header) => {
+        header.addEventListener('click', () => {
+          const key = header.dataset.sort;
+          if (state.factsSort.key === key) {
+            state.factsSort.direction = state.factsSort.direction === 'asc' ? 'desc' : 'asc';
+          } else {
+            state.factsSort.key = key;
+            state.factsSort.direction = 'asc';
+          }
+          renderFactsTable();
+        });
+      });
+    }
+
     function renderDetail(record) {
       detailView.innerHTML = `
         <h4>${record.department} · ${record.machineName}</h4>
@@ -1234,9 +1512,9 @@
       `;
     }
 
-    function toCsv(rows) {
+    function toCsv(rows, columns = null) {
       if (!rows.length) return '';
-      const headers = Object.keys(rows[0]);
+      const headers = columns ? columns.map((column) => column.key) : Object.keys(rows[0]);
       const escapeCell = (value) => {
         if (value == null) return '';
         const text = String(value).replace(/"/g, '""');
