@@ -2274,10 +2274,9 @@
       });
       const queryName = 'Extracted_Facts';
       const queryLines = buildCombinedQueryLines(sanitizedRecords);
-      const queryFormulaLines = queryLines.map((line, index) => {
+      const queryFormulaLines = queryLines.map((line) => {
         const escaped = escapeVbaString(line);
-        const suffix = index === queryLines.length - 1 ? '' : ' & _';
-        return `  queryFormula = queryFormula & "${escaped}" & vbCrLf${suffix}`;
+        return `  queryFormula = queryFormula & "${escaped}" & vbCrLf`;
       });
 
       const lines = [
