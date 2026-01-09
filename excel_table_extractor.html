@@ -1766,6 +1766,8 @@
         const card = document.createElement('div');
         card.className = 'card';
         const confidence = calculateConfidence(record);
+        const confidenceDetail = buildConfidenceDetail(record, confidence);
+        const rangeLabel = formatRangeLabel(record.tableRange);
         card.innerHTML = `
           <div class="stack">
             <span class="tag">${record.department}</span>
@@ -1773,12 +1775,13 @@
             <span class="tag">${record.timeframeLabel}</span>
             <span class="tag">${record.unitLabel}</span>
           </div>
-          <h4>Table ${record.id}</h4>
-          <p class="muted">${record.rows.length} rows · ${record.times.length} time columns</p>
-          <div class="stack">
-            <span class="pill ${confidence >= 70 ? 'success' : 'warning'}">Confidence ${confidence}%</span>
-            ${record.qualityFlags.map((flag) => `<span class="pill warning">${flag}</span>`).join('')}
-          </div>
+          <h4>${record.id} · ${record.sheetName}</h4>
+          <p class="muted">Dept: ${record.department} · Mach: ${record.machineName} · TF: ${record.timeframeLabel} · Unit: ${record.unitLabel}</p>
+          <p class="muted">Range: ${rangeLabel} · ${record.rows.length} rows · ${record.times.length} time columns</p>
+          <p class="muted">
+            <strong class="pill ${confidence >= 70 ? 'success' : 'warning'}">Confidence ${confidence}%</strong>
+            ${confidenceDetail}
+          </p>
           <div class="linkish" data-id="${record.id}">View details</div>
         `;
         card.querySelector('.linkish').addEventListener('click', () => renderDetail(record));
@@ -1793,6 +1796,29 @@
       if (record.qualityFlags.includes('Weak boundary isolation')) score -= 10;
       if (record.machineName === 'Unknown machine') score -= 10;
       return Math.max(0, Math.min(100, score));
+    }
+
+    function buildConfidenceDetail(record, confidence) {
+      const reasons = [];
+      if (record.qualityFlags.includes('Weak boundary isolation')) {
+        reasons.push('table edge blends with nearby cells');
+      }
+      if (record.qualityFlags.includes('Total row detected')) {
+        reasons.push('total row included, which can skew row parsing');
+      }
+      if (record.machineName === 'Unknown machine' || record.qualityFlags.includes('Missing machine name')) {
+        reasons.push('machine name inferred from the header area');
+      }
+      if (record.times.length < 3) {
+        reasons.push(`only ${record.times.length} time columns found`);
+      }
+      if (!record.unitLabel || !record.timeframeLabel) {
+        reasons.push('missing unit or timeframe label');
+      }
+      if (!reasons.length) {
+        return 'Strong structural match with clear headers and boundaries.';
+      }
+      return `Lower because ${reasons.join(', ')}.`;
     }
 
     function renderQuarantine() {
@@ -2188,13 +2214,16 @@
     }
 
     function renderDetail(record) {
+      const confidence = calculateConfidence(record);
+      const confidenceDetail = buildConfidenceDetail(record, confidence);
       detailView.innerHTML = `
         <h4>${record.department} · ${record.machineName}</h4>
-        <p class="muted">${record.timeframeLabel} · ${record.unitLabel}</p>
+        <p class="muted">${record.timeframeLabel} · ${record.unitLabel} · ${record.sheetName}</p>
         <div class="stack">
-          <span class="pill">Range r${record.tableRange.r0}:c${record.tableRange.c0} → r${record.tableRange.r1}:c${record.tableRange.c1}</span>
-          ${record.qualityFlags.map((flag) => `<span class="pill warning">${flag}</span>`).join('')}
+          <span class="pill">Range ${formatRangeLabel(record.tableRange)}</span>
+          <span class="pill ${confidence >= 70 ? 'success' : 'warning'}">Confidence ${confidence}%</span>
         </div>
+        <p class="muted">${confidenceDetail}</p>
         <h5>Preview</h5>
         ${renderPreviewTable(buildPreviewFromRecord(record))}
       `;
