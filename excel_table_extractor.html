@@ -2125,8 +2125,9 @@
         "' and registers them as Power Query connections.",
         'Sub CreateQueriesFromExtractedTables()',
         '  Dim overlapCount As Long',
-        '  Dim specs As Variant',
+        '  Dim specs() As String',
         '  Dim spec As Variant',
+        '  Dim i As Long',
         '',
         '  Application.ScreenUpdating = False',
         '  Application.DisplayAlerts = False',
@@ -2136,19 +2137,17 @@
       if (!sanitizedRecords.length) {
         lines.push('  MsgBox "No tables detected. Run the extractor first.", vbExclamation');
       } else {
-        lines.push('  specs = Array( _');
+        lines.push(`  ReDim specs(0 To ${sanitizedRecords.length - 1})`);
         sanitizedRecords.forEach((record, index) => {
-          const suffix = index === sanitizedRecords.length - 1 ? '' : ', _';
           const spec = [
             escapeVbaString(record.sheetName),
             escapeVbaString(record.range),
             escapeVbaString(record.tableName),
             escapeVbaString(record.queryName)
           ].join('|');
-          lines.push(`    "${spec}"${suffix}`);
+          lines.push(`  specs(${index}) = "${spec}"`);
         });
         lines.push(
-          '  )',
           '',
           '  For Each spec In specs',
           '    CreateQueryFromSpec CStr(spec), overlapCount',
