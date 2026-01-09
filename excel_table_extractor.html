@@ -403,6 +403,26 @@
       padding: 4px 6px;
     }
 
+    .table-selection-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .table-selection-controls .muted {
+      margin-right: auto;
+    }
+
+    .table-select {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
     .facts-table table {
       width: 100%;
       table-layout: fixed;
@@ -580,6 +600,11 @@
 
           <div>
             <h3 class="section-title">Target tables</h3>
+            <div class="table-selection-controls">
+              <span class="muted" id="tableSelectionCount">No tables selected.</span>
+              <button class="button secondary small" id="selectAllTables" type="button">Select all</button>
+              <button class="button secondary small" id="selectNoneTables" type="button">Select none</button>
+            </div>
             <div id="tableCards" class="stack"></div>
           </div>
 
@@ -673,6 +698,7 @@
       logEntries: [],
       overlapPairs: [],
       summary: null,
+      selectedTableIds: new Set(),
       filters: {
         department: 'All',
         machine: 'All',
@@ -703,6 +729,9 @@
     const summaryStats = document.getElementById('summaryStats');
     const tableCards = document.getElementById('tableCards');
     const quarantineCards = document.getElementById('quarantineCards');
+    const tableSelectionCount = document.getElementById('tableSelectionCount');
+    const selectAllTables = document.getElementById('selectAllTables');
+    const selectNoneTables = document.getElementById('selectNoneTables');
     const detailView = document.getElementById('detailView');
     const expectedShape = document.getElementById('expectedShape');
     const detailScale = document.getElementById('detailScale');
@@ -757,9 +786,9 @@
       await runExtraction();
       renderAll();
       exportCsvBtn.disabled = state.facts.length === 0;
-      exportJsonBtn.disabled = state.tableRecords.length === 0;
+      exportJsonBtn.disabled = getSelectedTables().length === 0;
       exportLogBtn.disabled = state.extractionLog.length === 0;
-      exportMacroBtn.disabled = state.tableRecords.length === 0;
+      exportMacroBtn.disabled = getSelectedTables().length === 0;
     });
 
     filterDepartment.addEventListener('change', () => {
@@ -843,9 +872,10 @@
     });
 
     exportJsonBtn.addEventListener('click', () => {
+      const selectedRecords = getSelectedTables();
       const payload = {
         summary: state.summary,
-        tableRecords: state.tableRecords,
+        tableRecords: selectedRecords,
         facts: state.facts
       };
       downloadFile(JSON.stringify(payload, null, 2), 'extraction.json', 'application/json');
@@ -856,8 +886,18 @@
     });
 
     exportMacroBtn.addEventListener('click', () => {
-      const macro = buildMacroModule(state.tableRecords);
+      const macro = buildMacroModule(getSelectedTables());
       downloadFile(macro, 'extraction_power_query.bas', 'text/plain');
+    });
+
+    selectAllTables.addEventListener('click', () => {
+      state.selectedTableIds = new Set(state.tableRecords.map((record) => record.id));
+      updateSelectionState();
+    });
+
+    selectNoneTables.addEventListener('click', () => {
+      state.selectedTableIds = new Set();
+      updateSelectionState();
     });
 
     function resetState() {
@@ -869,6 +909,7 @@
       state.summary = null;
       state.overlapPairs = [];
       state.detailScale = 1;
+      state.selectedTableIds = new Set();
       state.factsSearch = '';
       state.factsColumnFilters = {};
       state.factsColumnWidths = {};
@@ -876,6 +917,7 @@
       state.factsPagination = { page: 1, perPage: 250 };
       tableCards.innerHTML = '';
       quarantineCards.innerHTML = '';
+      tableSelectionCount.textContent = 'No tables selected.';
       detailView.innerHTML = '<p class="muted">Select a table to see details.</p>';
       summaryStats.innerHTML = '';
       progressBar.style.width = '0%';
@@ -913,8 +955,8 @@
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
       detectOverlappingTables();
-      buildFacts();
-      computeSummary();
+      state.selectedTableIds = new Set(state.tableRecords.map((record) => record.id));
+      updateSelectionState();
       logEvent('info', `Extraction complete. ${state.tableRecords.length} target tables, ${state.nonTargetTables.length} quarantined.`);
     }
 
@@ -1544,9 +1586,9 @@
       return { ratio, isIsolated: ratio >= 0.6 };
     }
 
-    function buildFacts() {
+    function buildFacts(records) {
       state.facts = [];
-      state.tableRecords.forEach((record) => {
+      records.forEach((record) => {
         record.rows.forEach((row) => {
           record.times.forEach((time) => {
             const value = row.valuesByTime[time];
@@ -1568,12 +1610,12 @@
       });
     }
 
-    function computeSummary() {
+    function computeSummary(records) {
       const departments = new Set();
       const machines = new Set();
       const timeframes = new Set();
       const units = new Set();
-      state.tableRecords.forEach((record) => {
+      records.forEach((record) => {
         departments.add(record.department);
         machines.add(record.machineName);
         timeframes.add(record.timeframeLabel);
@@ -1582,12 +1624,32 @@
       state.summary = {
         sheetCount: state.workbook.SheetNames.length,
         targetTables: state.tableRecords.length,
+        selectedTables: records.length,
         quarantinedTables: state.nonTargetTables.length,
         departments: Array.from(departments),
         machines: Array.from(machines),
         timeframes: Array.from(timeframes),
         units: Array.from(units)
       };
+    }
+
+    function getSelectedTables() {
+      return state.tableRecords.filter((record) => state.selectedTableIds.has(record.id));
+    }
+
+    function updateSelectionState() {
+      const selected = getSelectedTables();
+      buildFacts(selected);
+      computeSummary(selected);
+      renderSummary();
+      renderFilters();
+      renderTables();
+      renderPivotSummary();
+      renderExpectedShape();
+      renderFactsTable();
+      exportCsvBtn.disabled = state.facts.length === 0;
+      exportJsonBtn.disabled = selected.length === 0;
+      exportMacroBtn.disabled = selected.length === 0;
     }
 
     function renderAll() {
@@ -1604,6 +1666,7 @@
       const stats = [
         { label: 'Sheets', value: state.summary.sheetCount },
         { label: 'Target tables', value: state.summary.targetTables },
+        { label: 'Selected tables', value: state.summary.selectedTables },
         { label: 'Quarantined', value: state.summary.quarantinedTables },
         { label: 'Departments', value: state.summary.departments.length },
         { label: 'Machines', value: state.summary.machines.length },
@@ -1620,12 +1683,13 @@
 
     function renderExpectedShape() {
       const expectedTables = EXPECTED.departments * EXPECTED.machines * EXPECTED.timeframes * EXPECTED.units;
-      expectedShape.textContent = `Expected roughly ${EXPECTED.departments} departments × ${EXPECTED.machines} machines × ${EXPECTED.timeframes} timeframes × ${EXPECTED.units} units = ${expectedTables} tables. Detected ${state.tableRecords.length} target tables.`;
+      expectedShape.textContent = `Expected roughly ${EXPECTED.departments} departments × ${EXPECTED.machines} machines × ${EXPECTED.timeframes} timeframes × ${EXPECTED.units} units = ${expectedTables} tables. Detected ${state.tableRecords.length} target tables, ${state.summary.selectedTables} selected.`;
     }
 
     function renderPivotSummary() {
-      if (!state.tableRecords.length) {
-        pivotSummary.innerHTML = '<p class="muted">Run extraction to see the pivot summary.</p>';
+      const selectedRecords = getSelectedTables();
+      if (!selectedRecords.length) {
+        pivotSummary.innerHTML = '<p class="muted">Select at least one table to see the pivot summary.</p>';
         return;
       }
       const pivot = new Map();
@@ -1633,7 +1697,7 @@
         if (!map.has(key)) map.set(key, new Map());
         return map.get(key);
       };
-      state.tableRecords.forEach((record) => {
+      selectedRecords.forEach((record) => {
         const department = record.department ?? 'Unknown department';
         const machine = record.machineName ?? 'Unknown machine';
         const timeframe = record.timeframeLabel ?? 'Unknown timeframe';
@@ -1718,12 +1782,12 @@
         `).join('');
       };
       const totalFacts = state.facts.length;
-      const totalRows = state.tableRecords.reduce((sum, record) => sum + record.rows.length, 0);
+      const totalRows = selectedRecords.reduce((sum, record) => sum + record.rows.length, 0);
       pivotSummary.innerHTML = `
         <div class="pivot-summary-grid">
           ${renderDepartments()}
         </div>
-        <p class="muted small">Totals: ${state.tableRecords.length} tables · ${totalRows} data rows · ${totalFacts} fact values.</p>
+        <p class="muted small">Totals: ${selectedRecords.length} tables · ${totalRows} data rows · ${totalFacts} fact values.</p>
       `;
     }
 
@@ -1732,6 +1796,10 @@
       populateFilter(filterMachine, state.summary.machines);
       populateFilter(filterTimeframe, state.summary.timeframes);
       populateFilter(filterUnit, state.summary.units);
+      state.filters.department = filterDepartment.value;
+      state.filters.machine = filterMachine.value;
+      state.filters.timeframe = filterTimeframe.value;
+      state.filters.unit = filterUnit.value;
     }
 
     function populateFilter(select, values) {
@@ -1757,6 +1825,10 @@
 
     function renderTables() {
       const filtered = state.tableRecords.filter(filterRecord);
+      const selectedCount = state.selectedTableIds.size;
+      tableSelectionCount.textContent = selectedCount
+        ? `${selectedCount} of ${state.tableRecords.length} tables selected for integration.`
+        : 'No tables selected for integration.';
       if (!filtered.length) {
         tableCards.innerHTML = '<p class="muted">No tables match the selected filters.</p>';
         return;
@@ -1766,6 +1838,8 @@
         const card = document.createElement('div');
         card.className = 'card';
         const confidence = calculateConfidence(record);
+        const isSelected = state.selectedTableIds.has(record.id);
+        const checkboxId = `select-${record.id}`;
         card.innerHTML = `
           <div class="stack">
             <span class="tag">${record.department}</span>
@@ -1773,6 +1847,10 @@
             <span class="tag">${record.timeframeLabel}</span>
             <span class="tag">${record.unitLabel}</span>
           </div>
+          <label class="table-select" for="${checkboxId}">
+            <input type="checkbox" id="${checkboxId}" data-select-table="${record.id}" ${isSelected ? 'checked' : ''} />
+            Include in exports
+          </label>
           <h4>Table ${record.id}</h4>
           <p class="muted">${record.rows.length} rows · ${record.times.length} time columns</p>
           <div class="stack">
@@ -1782,6 +1860,16 @@
           <div class="linkish" data-id="${record.id}">View details</div>
         `;
         card.querySelector('.linkish').addEventListener('click', () => renderDetail(record));
+        const checkbox = card.querySelector('input[data-select-table]');
+        checkbox.addEventListener('change', (event) => {
+          const tableId = event.target.dataset.selectTable;
+          if (event.target.checked) {
+            state.selectedTableIds.add(tableId);
+          } else {
+            state.selectedTableIds.delete(tableId);
+          }
+          updateSelectionState();
+        });
         tableCards.appendChild(card);
       });
     }
@@ -1914,7 +2002,10 @@
         return;
       }
       if (!state.facts.length) {
-        factsTableContainer.innerHTML = '<p class="muted">Run extraction to see the facts table.</p>';
+        const message = state.tableRecords.length
+          ? 'Select at least one table to see the facts table.'
+          : 'Run extraction to see the facts table.';
+        factsTableContainer.innerHTML = `<p class="muted">${message}</p>`;
         factsRowCount.textContent = '';
         factsPageStatus.textContent = '';
         factsPrev.disabled = true;
