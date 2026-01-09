@@ -2394,7 +2394,7 @@
         '    mTimeframe = Replace(timeframe, """", """""")',
         '    mUnit = Replace(unitLabel, """", """""")',
         '    formula = "let" & vbCrLf & _',
-        '      "  Source = Excel.CurrentWorkbook(){[Name=""""" & tableName & """"""]}[Content]," & vbCrLf & _',
+        '      "  Source = Excel.CurrentWorkbook(){[Name=" & Chr(34) & tableName & Chr(34) & "]}[Content]," & vbCrLf & _',
         '      "  Cleaned = Table.RemoveColumns(Source, {""Department"",""Machine"",""Timeframe"",""Unit""}, MissingField.Ignore)," & vbCrLf & _',
         '      "  AddDepartment = Table.AddColumn(Cleaned, ""Department"", each """ & mDepartment & """, type text)," & vbCrLf & _',
         '      "  AddMachine = Table.AddColumn(AddDepartment, ""Machine"", each """ & mMachine & """, type text)," & vbCrLf & _',
