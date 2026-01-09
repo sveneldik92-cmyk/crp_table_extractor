@@ -937,8 +937,6 @@
             if (rangesOverlap(recordA.tableRange, recordB.tableRange)) {
               const rangeA = formatRangeLabel(recordA.tableRange);
               const rangeB = formatRangeLabel(recordB.tableRange);
-              const overlapRange = getOverlapRange(recordA.tableRange, recordB.tableRange);
-              const overlapLabel = overlapRange ? formatRangeLabel(overlapRange) : 'Unknown overlap range';
               overlapsById.get(recordA.id).push(recordB.id);
               overlapsById.get(recordB.id).push(recordA.id);
               overlapPairs.push({
@@ -946,17 +944,14 @@
                 tableA: recordA.id,
                 tableB: recordB.id,
                 rangeA,
-                rangeB,
-                overlapRange,
-                overlapLabel
+                rangeB
               });
-              logEvent('error', `Overlapping tables detected on "${sheetName}": ${recordA.id} ${rangeA} overlaps ${recordB.id} ${rangeB}. Intersection: ${overlapLabel}.`, {
+              logEvent('error', `Overlapping tables detected on "${sheetName}": ${recordA.id} ${rangeA} overlaps ${recordB.id} ${rangeB}.`, {
                 sheetName,
                 tableA: recordA.id,
                 tableB: recordB.id,
                 rangeA,
-                rangeB,
-                overlapLabel
+                rangeB
               });
             }
           }
@@ -971,15 +966,6 @@
 
     function rangesOverlap(a, b) {
       return a.r0 <= b.r1 && a.r1 >= b.r0 && a.c0 <= b.c1 && a.c1 >= b.c0;
-    }
-
-    function getOverlapRange(a, b) {
-      const r0 = Math.max(a.r0, b.r0);
-      const c0 = Math.max(a.c0, b.c0);
-      const r1 = Math.min(a.r1, b.r1);
-      const c1 = Math.min(a.c1, b.c1);
-      if (r0 > r1 || c0 > c1) return null;
-      return { r0, c0, r1, c1 };
     }
 
     function formatRangeLabel(range) {
@@ -2082,7 +2068,7 @@
       if (overlapPairs.length) {
         issues.push({
           title: `Overlapping tables (${overlapPairs.length})`,
-          details: overlapPairs.slice(0, 4).map((overlap) => `Sheet "${overlap.sheetName}": ${overlap.tableA} ${overlap.rangeA} overlaps ${overlap.tableB} ${overlap.rangeB}. Intersection: ${overlap.overlapLabel}`),
+          details: overlapPairs.slice(0, 4).map((overlap) => `Sheet "${overlap.sheetName}": ${overlap.tableA} ${overlap.rangeA} overlaps ${overlap.tableB} ${overlap.rangeB}`),
           fix: 'Separate the tables with at least one empty row or column, or adjust merged cells so each table occupies a unique range.'
         });
       } else {
@@ -2280,11 +2266,7 @@
           sheetName: record.sheetName,
           range: buildMacroRange(record),
           tableName: uniqueName,
-          queryName: uniqueName,
-          department: record.department,
-          machine: record.machineName,
-          timeframe: record.timeframeLabel,
-          unit: record.unitLabel
+          queryName: uniqueName
         };
       });
 
@@ -2296,9 +2278,6 @@
         "' and registers them as Power Query connections.",
         'Sub CreateQueriesFromExtractedTables()',
         '  Dim overlapCount As Long',
-        '  Dim overlapDetails As String',
-        '  Dim errorCount As Long',
-        '  Dim errorDetails As String',
         '  Dim specs() As String',
         '  Dim spec As Variant',
         '  Dim i As Long',
@@ -2317,32 +2296,20 @@
             escapeVbaString(record.sheetName),
             escapeVbaString(record.range),
             escapeVbaString(record.tableName),
-            escapeVbaString(record.queryName),
-            escapeVbaString(record.department),
-            escapeVbaString(record.machine),
-            escapeVbaString(record.timeframe),
-            escapeVbaString(record.unit)
+            escapeVbaString(record.queryName)
           ].join('|');
           lines.push(`  specs(${index}) = "${spec}"`);
         });
         lines.push(
           '',
           '  For Each spec In specs',
-          '    CreateQueryFromSpec CStr(spec), overlapCount, overlapDetails, errorCount, errorDetails',
+          '    CreateQueryFromSpec CStr(spec), overlapCount',
           '  Next spec',
           ''
         );
         lines.push(
-          '  If overlapCount > 0 Or errorCount > 0 Then',
-          '    Dim summaryMessage As String',
-          '    summaryMessage = "Power Query connections created with issues."',
-          '    If overlapCount > 0 Then',
-          '      summaryMessage = summaryMessage & vbCrLf & vbCrLf & overlapCount & " table(s) skipped due to overlapping ranges:" & overlapDetails',
-          '    End If',
-          '    If errorCount > 0 Then',
-          '      summaryMessage = summaryMessage & vbCrLf & vbCrLf & errorCount & " table(s) failed to create queries:" & errorDetails',
-          '    End If',
-          '    MsgBox summaryMessage, vbExclamation',
+          '  If overlapCount > 0 Then',
+          '    MsgBox "Power Query connections created. " & overlapCount & " table(s) skipped due to overlapping ranges.", vbExclamation',
           '  Else',
           '    MsgBox "Power Query connections created for all detected tables.", vbInformation',
           '  End If'
@@ -2355,33 +2322,23 @@
         '  Application.ScreenUpdating = True',
         'End Sub',
         '',
-        'Private Sub CreateQueryFromSpec(ByVal spec As String, ByRef overlapCount As Long, ByRef overlapDetails As String, ByRef errorCount As Long, ByRef errorDetails As String)',
+        'Private Sub CreateQueryFromSpec(ByVal spec As String, ByRef overlapCount As Long)',
         '  Dim parts As Variant',
         '  Dim ws As Worksheet',
         '  Dim tbl As ListObject',
         '  Dim existingTable As ListObject',
-        '  Dim overlapRange As Range',
         '  Dim queryName As String',
         '  Dim tableName As String',
-        '  Dim department As String',
-        '  Dim machine As String',
-        '  Dim timeframe As String',
-        '  Dim unit As String',
-        '  Dim formulaText As String',
         '  Dim tableRange As Range',
         '  Dim overlapFound As Boolean',
         '',
         '  parts = Split(spec, "|")',
-        '  If UBound(parts) < 7 Then Exit Sub',
+        '  If UBound(parts) < 3 Then Exit Sub',
         '',
         '  Set ws = ThisWorkbook.Worksheets(CStr(parts(0)))',
         '  ws.Activate',
         '  tableName = CStr(parts(2))',
         '  queryName = CStr(parts(3))',
-        '  department = CStr(parts(4))',
-        '  machine = CStr(parts(5))',
-        '  timeframe = CStr(parts(6))',
-        '  unit = CStr(parts(7))',
         '  Set tableRange = ws.Range(CStr(parts(1)))',
         '  On Error Resume Next',
         '  ws.ListObjects(tableName).Delete',
@@ -2396,28 +2353,11 @@
         '  Next existingTable',
         '  If overlapFound Then',
         '    overlapCount = overlapCount + 1',
-        '    Set overlapRange = Intersect(existingTable.Range, tableRange)',
-        '    overlapDetails = overlapDetails & vbCrLf & "- Sheet """ & ws.Name & """: " & tableName & " " & tableRange.Address(False, False) & " overlaps " & existingTable.Name & " " & existingTable.Range.Address(False, False) & " (intersection " & overlapRange.Address(False, False) & ")"',
         '  Else',
         '    Set tbl = ws.ListObjects.Add(xlSrcRange, tableRange, , xlYes)',
         '    tbl.Name = tableName',
-        '    formulaText = "let Source = Excel.CurrentWorkbook(){[Name=""" & tableName & """]}[Content]," & _',
-        '      " DepartmentColumn = Table.AddColumn(Source, ""Department"", each """ & Replace(department, """", """""") & """)," & _',
-        '      " MachineColumn = Table.AddColumn(DepartmentColumn, ""Machine"", each """ & Replace(machine, """", """""") & """)," & _',
-        '      " TimeframeColumn = Table.AddColumn(MachineColumn, ""Timeframe"", each """ & Replace(timeframe, """", """""") & """)," & _',
-        '      " UnitColumn = Table.AddColumn(TimeframeColumn, ""Unit"", each """ & Replace(unit, """", """""") & """)," & _',
-        '      " Ordered = Table.ReorderColumns(UnitColumn, {""Department"", ""Machine"", ""Timeframe"", ""Unit""} & Table.ColumnNames(Source))" & _',
-        '      " in Ordered"',
-        '    On Error GoTo QueryError',
-        '    ThisWorkbook.Queries.Add Name:=queryName, Formula:=formulaText',
-        '    On Error GoTo 0',
+        '    ThisWorkbook.Queries.Add Name:=queryName, Formula:="let Source = Excel.CurrentWorkbook(){[Name=""" & tableName & """]}[Content] in Source"',
         '  End If',
-        '  Exit Sub',
-        'QueryError:',
-        '  errorCount = errorCount + 1',
-        '  errorDetails = errorDetails & vbCrLf & "- Sheet """ & ws.Name & """: " & tableName & " (" & tableRange.Address(False, False) & ") failed to create query. Error " & Err.Number & ": " & Err.Description',
-        '  On Error GoTo 0',
-        '  Err.Clear',
         'End Sub',
         ''
       );
