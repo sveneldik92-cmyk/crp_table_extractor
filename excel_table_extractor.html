@@ -2101,6 +2101,7 @@
         sanitizedRecords.forEach((record) => {
           lines.push(
             `  Set ws = ThisWorkbook.Worksheets("${escapeVbaString(record.sheetName)}")`,
+            '  ws.Activate',
             `  tableName = "${record.tableName}"`,
             `  queryName = "${record.queryName}"`,
             `  Set tableRange = ws.Range("${record.range}")`,
