@@ -628,7 +628,7 @@
 
       <div id="tab-log" class="tab-panel">
         <h3 class="section-title">Extraction log</h3>
-        <p class="muted" id="logSummary"></p>
+        <div id="logSummary" class="card"></div>
         <pre id="logOutput" class="card" style="max-height: 520px; overflow: auto; white-space: pre-wrap;"></pre>
       </div>
 
@@ -670,6 +670,8 @@
       facts: [],
       nonTargetTables: [],
       extractionLog: [],
+      logEntries: [],
+      overlapPairs: [],
       summary: null,
       filters: {
         department: 'All',
@@ -850,7 +852,7 @@
     });
 
     exportLogBtn.addEventListener('click', () => {
-      downloadFile(state.extractionLog.join('\n'), 'extraction_log.txt', 'text/plain');
+      downloadFile(buildLogText(), 'extraction_log.txt', 'text/plain');
     });
 
     exportMacroBtn.addEventListener('click', () => {
@@ -863,7 +865,9 @@
       state.facts = [];
       state.nonTargetTables = [];
       state.extractionLog = [];
+      state.logEntries = [];
       state.summary = null;
+      state.overlapPairs = [];
       state.detailScale = 1;
       state.factsSearch = '';
       state.factsColumnFilters = {};
@@ -891,6 +895,7 @@
       const levelTag = `[${level.toUpperCase()}]`;
       const contextText = context ? ` ${JSON.stringify(context)}` : '';
       state.extractionLog.push(`${timestamp} ${levelTag} ${message}${contextText}`);
+      state.logEntries.push({ timestamp, level, message, context });
     }
 
     async function runExtraction() {
@@ -916,6 +921,7 @@
     function detectOverlappingTables() {
       const overlapsById = new Map();
       const bySheet = new Map();
+      const overlapPairs = [];
       state.tableRecords.forEach((record) => {
         const list = bySheet.get(record.sheetName) || [];
         list.push(record);
@@ -931,6 +937,13 @@
             if (rangesOverlap(recordA.tableRange, recordB.tableRange)) {
               overlapsById.get(recordA.id).push(recordB.id);
               overlapsById.get(recordB.id).push(recordA.id);
+              overlapPairs.push({
+                sheetName,
+                tableA: recordA.id,
+                tableB: recordB.id,
+                rangeA: recordA.tableRange,
+                rangeB: recordB.tableRange
+              });
               logEvent('error', `Overlapping tables detected on "${sheetName}": ${recordA.id} overlaps ${recordB.id}.`, {
                 sheetName,
                 tableA: recordA.id,
@@ -946,6 +959,7 @@
       state.tableRecords.forEach((record) => {
         record.overlapsWith = overlapsById.get(record.id) || [];
       });
+      state.overlapPairs = overlapPairs;
     }
 
     function rangesOverlap(a, b) {
@@ -2028,15 +2042,129 @@
       });
     }
 
+    function buildIssueSummaries() {
+      const issues = [];
+      const overlapPairs = state.overlapPairs || [];
+      if (overlapPairs.length) {
+        issues.push({
+          title: `Overlapping tables (${overlapPairs.length})`,
+          details: overlapPairs.slice(0, 4).map((overlap) => `Sheet "${overlap.sheetName}": ${overlap.tableA} overlaps ${overlap.tableB}`),
+          fix: 'Separate the tables with at least one empty row or column, or adjust merged cells so each table occupies a unique range.'
+        });
+      } else {
+        issues.push({
+          title: 'Overlapping tables (0)',
+          details: ['No overlapping tables detected in the extracted ranges.'],
+          fix: null
+        });
+      }
+
+      const duplicateHeaderEntries = state.logEntries.filter(
+        (entry) => entry.level === 'error' && entry.message.startsWith('Duplicate time header labels detected')
+      );
+      if (duplicateHeaderEntries.length) {
+        issues.push({
+          title: `Duplicate time headers (${duplicateHeaderEntries.length})`,
+          details: duplicateHeaderEntries.slice(0, 4).map((entry) => entry.message),
+          fix: 'Ensure each time column header is unique in the header row. Remove or rename duplicates before re-running extraction.'
+        });
+      }
+
+      const duplicateValueEntries = state.logEntries.filter(
+        (entry) => entry.level === 'error' && entry.message.startsWith('Duplicate time value for')
+      );
+      if (duplicateValueEntries.length) {
+        issues.push({
+          title: `Duplicate time values (${duplicateValueEntries.length})`,
+          details: duplicateValueEntries.slice(0, 4).map((entry) => entry.message),
+          fix: 'Keep a single value per time column. Clear or consolidate extra values so each row has one value per time header.'
+        });
+      }
+
+      if (!duplicateHeaderEntries.length && !duplicateValueEntries.length && overlapPairs.length === 0) {
+        issues.push({
+          title: 'Errors (0)',
+          details: ['No error-level issues detected in this extraction.'],
+          fix: null
+        });
+      }
+
+      return issues;
+    }
+
+    function buildLogText() {
+      if (!state.extractionLog.length) return '';
+      const errorCount = state.logEntries.filter((entry) => entry.level === 'error').length;
+      const warnCount = state.logEntries.filter((entry) => entry.level === 'warn').length;
+      const issues = buildIssueSummaries();
+      const summaryLines = [
+        '=== Summary ===',
+        `${state.extractionLog.length} log entr${state.extractionLog.length === 1 ? 'y' : 'ies'} · ${errorCount} error${errorCount === 1 ? '' : 's'} · ${warnCount} warning${warnCount === 1 ? '' : 's'}`,
+        ''
+      ];
+
+      issues.forEach((issue) => {
+        summaryLines.push(`- ${issue.title}`);
+        issue.details.forEach((detail) => {
+          summaryLines.push(`  • ${detail}`);
+        });
+        if (issue.fix) {
+          summaryLines.push(`  How to fix: ${issue.fix}`);
+        }
+      });
+
+      return `${summaryLines.join('\n')}\n\n${state.extractionLog.join('\n')}`;
+    }
+
     function renderLog() {
       if (!state.extractionLog.length) {
         logSummary.textContent = 'No log entries available.';
         logOutput.textContent = '';
         return;
       }
-      const errorCount = state.extractionLog.filter((entry) => entry.includes('[ERROR]')).length;
-      logSummary.textContent = `${state.extractionLog.length} log entr${state.extractionLog.length === 1 ? 'y' : 'ies'} · ${errorCount} error${errorCount === 1 ? '' : 's'}`;
-      logOutput.textContent = state.extractionLog.join('\n');
+
+      const errorCount = state.logEntries.filter((entry) => entry.level === 'error').length;
+      const warnCount = state.logEntries.filter((entry) => entry.level === 'warn').length;
+      const issues = buildIssueSummaries();
+
+      logSummary.innerHTML = '';
+      const summaryTitle = document.createElement('h4');
+      summaryTitle.textContent = 'Summary';
+      const summaryMeta = document.createElement('p');
+      summaryMeta.className = 'muted';
+      summaryMeta.textContent = `${state.extractionLog.length} log entr${state.extractionLog.length === 1 ? 'y' : 'ies'} · ${errorCount} error${errorCount === 1 ? '' : 's'} · ${warnCount} warning${warnCount === 1 ? '' : 's'}`;
+
+      const issueStack = document.createElement('div');
+      issueStack.className = 'stack';
+      issues.forEach((issue) => {
+        const issueBlock = document.createElement('div');
+        const title = document.createElement('strong');
+        title.textContent = issue.title;
+        issueBlock.appendChild(title);
+
+        const detailList = document.createElement('ul');
+        detailList.className = 'muted';
+        issue.details.forEach((detail) => {
+          const item = document.createElement('li');
+          item.textContent = detail;
+          detailList.appendChild(item);
+        });
+        issueBlock.appendChild(detailList);
+
+        if (issue.fix) {
+          const fix = document.createElement('p');
+          fix.className = 'muted';
+          fix.textContent = `How to fix: ${issue.fix}`;
+          issueBlock.appendChild(fix);
+        }
+
+        issueStack.appendChild(issueBlock);
+      });
+
+      logSummary.appendChild(summaryTitle);
+      logSummary.appendChild(summaryMeta);
+      logSummary.appendChild(issueStack);
+      logOutput.textContent = buildLogText();
     }
 
     function renderDetail(record) {
