@@ -2266,11 +2266,7 @@
           sheetName: record.sheetName,
           range: buildMacroRange(record),
           tableName: uniqueName,
-          queryName: uniqueName,
-          department: record.department,
-          machineName: record.machineName,
-          timeframeLabel: record.timeframeLabel,
-          unitLabel: record.unitLabel
+          queryName: uniqueName
         };
       });
 
@@ -2303,11 +2299,7 @@
             escapeVbaString(record.sheetName),
             escapeVbaString(record.range),
             escapeVbaString(record.tableName),
-            escapeVbaString(record.queryName),
-            escapeVbaString(record.department),
-            escapeVbaString(record.machineName),
-            escapeVbaString(record.timeframeLabel),
-            escapeVbaString(record.unitLabel)
+            escapeVbaString(record.queryName)
           ].join('|');
           lines.push(`  specs(${index}) = "${spec}"`);
         });
@@ -2345,26 +2337,15 @@
         '  Dim queryName As String',
         '  Dim tableName As String',
         '  Dim tableRange As Range',
-        '  Dim department As String',
-        '  Dim machineName As String',
-        '  Dim timeframeLabel As String',
-        '  Dim unitLabel As String',
-        '  Dim formulaText As String',
         '  Dim overlapFound As Boolean',
-        '  Dim errorInfo As String',
         '',
-        '  On Error GoTo QueryError',
         '  parts = Split(spec, "|")',
-        '  If UBound(parts) < 7 Then Exit Sub',
+        '  If UBound(parts) < 3 Then Exit Sub',
         '',
         '  Set ws = ThisWorkbook.Worksheets(CStr(parts(0)))',
         '  ws.Activate',
         '  tableName = CStr(parts(2))',
         '  queryName = CStr(parts(3))',
-        '  department = EscapeMString(CStr(parts(4)))',
-        '  machineName = EscapeMString(CStr(parts(5)))',
-        '  timeframeLabel = EscapeMString(CStr(parts(6)))',
-        '  unitLabel = EscapeMString(CStr(parts(7)))',
         '  Set tableRange = ws.Range(CStr(parts(1)))',
         '  On Error Resume Next',
         '  ThisWorkbook.Names(tableName).Delete',
@@ -2387,31 +2368,9 @@
         '  Else',
         '    ThisWorkbook.Names.Add Name:=tableName, RefersTo:=tableRange',
         '    createdRanges.Add tableRange',
-        '    formulaText = "let Source = Excel.CurrentWorkbook(){[Name=""" & tableName & """]}[Content]," & _',
-        '      " AddedDepartment = Table.AddColumn(Source, ""Department"", each """ & department & """)," & _',
-        '      " AddedMachine = Table.AddColumn(AddedDepartment, ""Machine"", each """ & machineName & """)," & _',
-        '      " AddedTimeframe = Table.AddColumn(AddedMachine, ""Timeframe"", each """ & timeframeLabel & """)," & _',
-        '      " AddedUnit = Table.AddColumn(AddedTimeframe, ""Unit"", each """ & unitLabel & """)," & _',
-        '      " ReorderedColumns = Table.ReorderColumns(AddedUnit, {""Department"", ""Machine"", ""Timeframe"", ""Unit""} & List.RemoveItems(Table.ColumnNames(AddedUnit), {""Department"", ""Machine"", ""Timeframe"", ""Unit""}))" & _',
-        '      " in ReorderedColumns"',
-        '    ThisWorkbook.Queries.Add Name:=queryName, Formula:=formulaText',
+        '    ThisWorkbook.Queries.Add Name:=queryName, Formula:="let Source = Excel.CurrentWorkbook(){[Name=""" & tableName & """]}[Content] in Source"',
         '  End If',
-        '  Exit Sub',
-        'QueryError:',
-        '  overlapCount = overlapCount + 1',
-        '  errorInfo = Err.Description',
-        '  If Len(tableName) = 0 Then tableName = "UnknownTable"',
-        '  If Not ws Is Nothing Then',
-        '    skippedDetails = skippedDetails & vbCrLf & "- " & tableName & " (" & ws.Name & "): " & errorInfo',
-        '  Else',
-        '    skippedDetails = skippedDetails & vbCrLf & "- " & tableName & ": " & errorInfo',
-        '  End If',
-        '  Err.Clear',
         'End Sub',
-        '',
-        'Private Function EscapeMString(ByVal value As String) As String',
-        '  EscapeMString = Replace(value, """", """""")',
-        'End Function',
         ''
       );
 
