@@ -690,6 +690,7 @@
       if (!fileInput.files.length) return;
       resetState();
       const file = fileInput.files[0];
+      logEvent('info', `Loaded file "${file.name}" (${(file.size / 1024).toFixed(1)} KB).`);
       const data = await file.arrayBuffer();
       state.workbook = XLSX.read(data, { type: 'array', cellDates: true });
       await runExtraction();
@@ -790,7 +791,7 @@
     });
 
     exportLogBtn.addEventListener('click', () => {
-      downloadFile(JSON.stringify(state.extractionLog, null, 2), 'extraction_log.json', 'application/json');
+      downloadFile(state.extractionLog.join('\n'), 'extraction_log.txt', 'text/plain');
     });
 
     function resetState() {
@@ -822,20 +823,30 @@
       logSummary.textContent = '';
     }
 
+    function logEvent(level, message, context = null) {
+      const timestamp = new Date().toISOString();
+      const levelTag = `[${level.toUpperCase()}]`;
+      const contextText = context ? ` ${JSON.stringify(context)}` : '';
+      state.extractionLog.push(`${timestamp} ${levelTag} ${message}${contextText}`);
+    }
+
     async function runExtraction() {
       const sheetNames = state.workbook.SheetNames;
       const totalSheets = sheetNames.length;
+      logEvent('info', `Starting extraction across ${totalSheets} sheet${totalSheets === 1 ? '' : 's'}.`);
       for (let index = 0; index < sheetNames.length; index += 1) {
         const sheetName = sheetNames[index];
         const ws = state.workbook.Sheets[sheetName];
         const grid = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
         const mergeInfo = buildMergeLookup(ws['!merges'] || []);
+        logEvent('info', `Scanning sheet "${sheetName}".`);
         extractTablesFromSheet({ sheetName, ws, grid, mergeInfo });
         progressBar.style.width = `${Math.round(((index + 1) / totalSheets) * 100)}%`;
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
       buildFacts();
       computeSummary();
+      logEvent('info', `Extraction complete. ${state.tableRecords.length} target tables, ${state.nonTargetTables.length} quarantined.`);
     }
 
     function buildMergeLookup(merges) {
@@ -904,7 +915,6 @@
         const result = processCandidate({ candidate, sheetName, department, ws, grid, mergeInfo });
         if (result) {
           state.tableRecords.push(result.tableRecord);
-          state.extractionLog.push(result.logEntry);
         }
       });
     }
@@ -980,10 +990,7 @@
           reasons,
           preview: buildPreview({ ws, grid, mergeInfo, r0: rMeta, c0: tableKeyCol, r1: Math.min(rEnd, rMeta + 8), c1: Math.min(cEnd, tableKeyCol + 8) })
         });
-        state.extractionLog.push({
-          sheetName,
-          candidate: { rh, tableKeyCol },
-          status: 'quarantined',
+        logEvent('warn', `Quarantined table candidate on "${sheetName}" (r${rh}, c${tableKeyCol}).`, {
           reasons
         });
         return null;
@@ -1038,6 +1045,7 @@
         boundaryScore
       };
 
+      logEvent('info', `Detected target table ${tableId} on "${sheetName}".`, logEntry);
       return { tableRecord, logEntry };
     }
 
@@ -1079,11 +1087,7 @@
         }
       }
       if (duplicates.length) {
-        state.extractionLog.push({
-          level: 'error',
-          type: 'duplicate-time-header',
-          sheetName,
-          headerRow: rh,
+        logEvent('error', `Duplicate time header labels detected on "${sheetName}" (row ${rh}).`, {
           tableKeyCol,
           duplicates
         });
@@ -1238,13 +1242,8 @@
             header.extraCols.forEach((extraCol) => {
               const extraValue = getVisibleValue(ws, grid, mergeInfo, r, extraCol);
               if (!isEmptyValue(extraValue)) {
-                state.extractionLog.push({
-                  level: 'error',
-                  type: 'duplicate-time-value',
+                logEvent('error', `Duplicate time value for "${timeLabel}" in ${tableId} (row ${r}).`, {
                   sheetName,
-                  tableId,
-                  rowIndex: r,
-                  timeLabel,
                   primaryCol: header.col,
                   extraCol,
                   primaryValue: value,
@@ -1752,9 +1751,9 @@
         logOutput.textContent = '';
         return;
       }
-      const errorCount = state.extractionLog.filter((entry) => entry.level === 'error').length;
+      const errorCount = state.extractionLog.filter((entry) => entry.includes('[ERROR]')).length;
       logSummary.textContent = `${state.extractionLog.length} log entr${state.extractionLog.length === 1 ? 'y' : 'ies'} · ${errorCount} error${errorCount === 1 ? '' : 's'}`;
-      logOutput.textContent = JSON.stringify(state.extractionLog, null, 2);
+      logOutput.textContent = state.extractionLog.join('\n');
     }
 
     function renderDetail(record) {
