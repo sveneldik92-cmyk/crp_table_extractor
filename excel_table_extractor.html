@@ -495,9 +495,9 @@
     }
 
     .pivot-tree {
-      list-style: disc;
+      list-style: none;
       margin: 0;
-      padding-left: 20px;
+      padding-left: 0;
       color: var(--muted);
     }
 
@@ -512,6 +512,33 @@
 
     .pivot-tree .pivot-subtle {
       font-weight: 500;
+    }
+
+    .pivot-node {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pivot-node .pivot-label,
+    .pivot-node .pivot-subtle {
+      margin-right: 4px;
+    }
+
+    .pivot-checkbox {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      color: inherit;
+    }
+
+    .pivot-checkbox input {
+      accent-color: var(--accent);
+    }
+
+    .pivot-tree .pivot-branch {
+      margin-left: 18px;
     }
   </style>
 </head>
@@ -928,6 +955,19 @@
       renderTables();
     });
 
+    pivotSummary.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      if (!target.matches('input[data-pivot-select]')) return;
+      const ids = (target.dataset.tableIds || '').split(',').filter(Boolean);
+      if (target.checked) {
+        ids.forEach((id) => state.selectedTableIds.add(id));
+      } else {
+        ids.forEach((id) => state.selectedTableIds.delete(id));
+      }
+      updateSelectionState();
+    });
+
     function resetState() {
       state.tableRecords = [];
       state.facts = [];
@@ -1202,13 +1242,15 @@
           const value = getVisibleValue(ws, grid, mergeInfo, r, c);
           const next = getVisibleValue(ws, grid, mergeInfo, r, c + 1);
           const third = getVisibleValue(ws, grid, mergeInfo, r, c + 2);
-          if (value && next && /^key$/i.test(String(value)) && /^module$/i.test(String(next)) && !isEmptyValue(third)) {
+          const normalizedValue = normalizeHeaderText(value);
+          const normalizedNext = normalizeHeaderText(next);
+          if (normalizedValue === 'key' && normalizedNext === 'module' && !isEmptyValue(third)) {
             addCandidate(r, c);
           }
-          if (value && /^key$/i.test(String(value)) && r + 1 < grid.length) {
+          if (normalizedValue === 'key' && r + 1 < grid.length) {
             const belowModule = getVisibleValue(ws, grid, mergeInfo, r + 1, c + 1);
             const belowThird = getVisibleValue(ws, grid, mergeInfo, r + 1, c + 2);
-            if (belowModule && /^module$/i.test(String(belowModule)) && !isEmptyValue(belowThird)) {
+            if (normalizeHeaderText(belowModule) === 'module' && !isEmptyValue(belowThird)) {
               addCandidate(r + 1, c);
             }
           }
@@ -1736,6 +1778,10 @@
     }
 
     function renderPivotSummary() {
+      if (!state.tableRecords.length) {
+        pivotSummary.innerHTML = '<p class="muted">Run extraction to see the pivot summary.</p>';
+        return;
+      }
       const selectedRecords = getSelectedTables();
       if (!selectedRecords.length) {
         pivotSummary.innerHTML = '<p class="muted">Select at least one table to see the pivot summary.</p>';
@@ -1746,7 +1792,7 @@
         if (!map.has(key)) map.set(key, new Map());
         return map.get(key);
       };
-      selectedRecords.forEach((record) => {
+      state.tableRecords.forEach((record) => {
         const department = record.department ?? 'Unknown department';
         const machine = record.machineName ?? 'Unknown machine';
         const timeframe = record.timeframeLabel ?? 'Unknown timeframe';
@@ -1754,7 +1800,10 @@
         const machineMap = ensureMap(pivot, department);
         const timeframeMap = ensureMap(machineMap, machine);
         const unitMap = ensureMap(timeframeMap, timeframe);
-        unitMap.set(unit, (unitMap.get(unit) || 0) + 1);
+        if (!unitMap.has(unit)) {
+          unitMap.set(unit, { tableIds: new Set() });
+        }
+        unitMap.get(unit).tableIds.add(record.id);
       });
 
       const sumMap = (map) => {
@@ -1763,32 +1812,61 @@
           if (value instanceof Map) {
             total += sumMap(value);
           } else {
-            total += value;
+            total += value.tableIds.size;
           }
         });
         return total;
       };
 
+      const collectTableIds = (map) => {
+        const ids = [];
+        map.forEach((value) => {
+          if (value instanceof Map) {
+            ids.push(...collectTableIds(value));
+          } else {
+            ids.push(...value.tableIds);
+          }
+        });
+        return ids;
+      };
+
       const sortEntries = (entries) => {
         return entries.sort((a, b) => {
-          const aTotal = a[1] instanceof Map ? sumMap(a[1]) : a[1];
-          const bTotal = b[1] instanceof Map ? sumMap(b[1]) : b[1];
+          const aTotal = a[1] instanceof Map ? sumMap(a[1]) : a[1].tableIds.size;
+          const bTotal = b[1] instanceof Map ? sumMap(b[1]) : b[1].tableIds.size;
           if (bTotal !== aTotal) return bTotal - aTotal;
           return String(a[0]).localeCompare(String(b[0]));
         });
       };
 
-      const renderCount = (count) => `
-        <span class="count-badge ${count > 1 ? 'alert' : ''}">${count}</span>
+      const renderCount = (selected, total) => `
+        <span class="count-badge ${selected !== total ? 'alert' : ''}">${selected}/${total}</span>
       `;
+
+      let checkboxIndex = 0;
+      const nextCheckboxId = () => `pivot-select-${checkboxIndex += 1}`;
 
       const renderUnits = (unitMap) => {
         const units = sortEntries(Array.from(unitMap.entries()));
         return `
-          <ul class="pivot-tree">
-            ${units.map(([unit, count]) => `
-              <li><span class="pivot-subtle">${unit}</span> ${renderCount(count)}</li>
-            `).join('')}
+          <ul class="pivot-tree pivot-branch">
+            ${units.map(([unit, entry]) => {
+              const ids = Array.from(entry.tableIds);
+              const selected = ids.filter((id) => state.selectedTableIds.has(id)).length;
+              const total = ids.length;
+              const checkboxId = nextCheckboxId();
+              return `
+                <li>
+                  <div class="pivot-node">
+                    <label class="pivot-checkbox" for="${checkboxId}">
+                      <input type="checkbox" id="${checkboxId}" data-pivot-select="unit" data-table-ids="${ids.join(',')}" data-selected-count="${selected}" data-total-count="${total}" />
+                      <span class="pivot-subtle">${unit}</span>
+                    </label>
+                    ${renderCount(selected, total)}
+                  </div>
+                </li>
+              `;
+            }).join('')}
           </ul>
         `;
       };
@@ -1796,13 +1874,25 @@
       const renderTimeframes = (timeframeMap) => {
         const timeframes = sortEntries(Array.from(timeframeMap.entries()));
         return `
-          <ul class="pivot-tree">
-            ${timeframes.map(([timeframe, unitMap]) => `
-              <li>
-                <span class="pivot-label">${timeframe}</span>
-                ${renderUnits(unitMap)}
-              </li>
-            `).join('')}
+          <ul class="pivot-tree pivot-branch">
+            ${timeframes.map(([timeframe, unitMap]) => {
+              const ids = collectTableIds(unitMap);
+              const selected = ids.filter((id) => state.selectedTableIds.has(id)).length;
+              const total = ids.length;
+              const checkboxId = nextCheckboxId();
+              return `
+                <li>
+                  <div class="pivot-node">
+                    <label class="pivot-checkbox" for="${checkboxId}">
+                      <input type="checkbox" id="${checkboxId}" data-pivot-select="timeframe" data-table-ids="${ids.join(',')}" data-selected-count="${selected}" data-total-count="${total}" />
+                      <span class="pivot-label">${timeframe}</span>
+                    </label>
+                    ${renderCount(selected, total)}
+                  </div>
+                  ${renderUnits(unitMap)}
+                </li>
+              `;
+            }).join('')}
           </ul>
         `;
       };
@@ -1810,25 +1900,49 @@
       const renderMachines = (machineMap) => {
         const machines = sortEntries(Array.from(machineMap.entries()));
         return `
-          <ul class="pivot-tree">
-            ${machines.map(([machine, timeframeMap]) => `
-              <li>
-                <span class="pivot-label">${machine}</span>
-                ${renderTimeframes(timeframeMap)}
-              </li>
-            `).join('')}
+          <ul class="pivot-tree pivot-branch">
+            ${machines.map(([machine, timeframeMap]) => {
+              const ids = collectTableIds(timeframeMap);
+              const selected = ids.filter((id) => state.selectedTableIds.has(id)).length;
+              const total = ids.length;
+              const checkboxId = nextCheckboxId();
+              return `
+                <li>
+                  <div class="pivot-node">
+                    <label class="pivot-checkbox" for="${checkboxId}">
+                      <input type="checkbox" id="${checkboxId}" data-pivot-select="machine" data-table-ids="${ids.join(',')}" data-selected-count="${selected}" data-total-count="${total}" />
+                      <span class="pivot-label">${machine}</span>
+                    </label>
+                    ${renderCount(selected, total)}
+                  </div>
+                  ${renderTimeframes(timeframeMap)}
+                </li>
+              `;
+            }).join('')}
           </ul>
         `;
       };
 
       const renderDepartments = () => {
         const departments = sortEntries(Array.from(pivot.entries()));
-        return departments.map(([department, machineMap]) => `
-          <div class="card">
-            <h4>${department}</h4>
-            ${renderMachines(machineMap)}
-          </div>
-        `).join('');
+        return departments.map(([department, machineMap]) => {
+          const ids = collectTableIds(machineMap);
+          const selected = ids.filter((id) => state.selectedTableIds.has(id)).length;
+          const total = ids.length;
+          const checkboxId = nextCheckboxId();
+          return `
+            <div class="card">
+              <div class="pivot-node">
+                <label class="pivot-checkbox" for="${checkboxId}">
+                  <input type="checkbox" id="${checkboxId}" data-pivot-select="department" data-table-ids="${ids.join(',')}" data-selected-count="${selected}" data-total-count="${total}" />
+                  <span class="pivot-label">${department}</span>
+                </label>
+                ${renderCount(selected, total)}
+              </div>
+              ${renderMachines(machineMap)}
+            </div>
+          `;
+        }).join('');
       };
       const totalFacts = state.facts.length;
       const totalRows = selectedRecords.reduce((sum, record) => sum + record.rows.length, 0);
@@ -1836,8 +1950,14 @@
         <div class="pivot-summary-grid">
           ${renderDepartments()}
         </div>
-        <p class="muted small">Totals: ${selectedRecords.length} tables · ${totalRows} data rows · ${totalFacts} fact values.</p>
+        <p class="muted small">Totals: ${selectedRecords.length}/${state.tableRecords.length} tables selected · ${totalRows} data rows · ${totalFacts} fact values.</p>
       `;
+      pivotSummary.querySelectorAll('input[data-pivot-select]').forEach((input) => {
+        const selected = Number(input.dataset.selectedCount || 0);
+        const total = Number(input.dataset.totalCount || 0);
+        input.checked = total > 0 && selected === total;
+        input.indeterminate = selected > 0 && selected < total;
+      });
     }
 
     function renderFilters() {
@@ -2564,7 +2684,7 @@
         '  },',
         '  Combined = Table.Combine(Tables),',
         '  Reordered = Table.ReorderColumns(Combined, {"Department", "Machine", "Timeframe", "Unit", "Key", "Module"}, MissingField.Ignore),',
-        '  Removed = Table.RemoveColumns(Reordered, {"Column17", "Efficiency per Work Center"}, MissingField.Ignore),',
+        '  Removed = Table.RemoveColumns(Reordered, {"Column17", "Efficiency per Work Center", "Efficiency per Workcenter"}, MissingField.Ignore),',
         '  KeepColumns = List.Intersect({Table.ColumnNames(Removed), {"Department", "Machine", "Timeframe", "Unit", "Key", "Module"}}),',
         '  Unpivoted = Table.UnpivotOtherColumns(Removed, KeepColumns, "Attribute", "Value"),',
         '  Renamed = Table.RenameColumns(Unpivoted, {{"Attribute", "Time"}}, MissingField.Ignore),',
