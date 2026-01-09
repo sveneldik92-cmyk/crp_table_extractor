@@ -2266,7 +2266,11 @@
           sheetName: record.sheetName,
           range: buildMacroRange(record),
           tableName: uniqueName,
-          queryName: uniqueName
+          queryName: uniqueName,
+          department: record.department,
+          machine: record.machineName,
+          timeframe: record.timeframeLabel,
+          unit: record.unitLabel
         };
       });
 
@@ -2296,7 +2300,11 @@
             escapeVbaString(record.sheetName),
             escapeVbaString(record.range),
             escapeVbaString(record.tableName),
-            escapeVbaString(record.queryName)
+            escapeVbaString(record.queryName),
+            escapeVbaString(record.department),
+            escapeVbaString(record.machine),
+            escapeVbaString(record.timeframe),
+            escapeVbaString(record.unit)
           ].join('|');
           lines.push(`  specs(${index}) = "${spec}"`);
         });
@@ -2329,16 +2337,25 @@
         '  Dim existingTable As ListObject',
         '  Dim queryName As String',
         '  Dim tableName As String',
+        '  Dim department As String',
+        '  Dim machine As String',
+        '  Dim timeframe As String',
+        '  Dim unit As String',
+        '  Dim formulaText As String',
         '  Dim tableRange As Range',
         '  Dim overlapFound As Boolean',
         '',
         '  parts = Split(spec, "|")',
-        '  If UBound(parts) < 3 Then Exit Sub',
+        '  If UBound(parts) < 7 Then Exit Sub',
         '',
         '  Set ws = ThisWorkbook.Worksheets(CStr(parts(0)))',
         '  ws.Activate',
         '  tableName = CStr(parts(2))',
         '  queryName = CStr(parts(3))',
+        '  department = CStr(parts(4))',
+        '  machine = CStr(parts(5))',
+        '  timeframe = CStr(parts(6))',
+        '  unit = CStr(parts(7))',
         '  Set tableRange = ws.Range(CStr(parts(1)))',
         '  On Error Resume Next',
         '  ws.ListObjects(tableName).Delete',
@@ -2356,7 +2373,14 @@
         '  Else',
         '    Set tbl = ws.ListObjects.Add(xlSrcRange, tableRange, , xlYes)',
         '    tbl.Name = tableName',
-        '    ThisWorkbook.Queries.Add Name:=queryName, Formula:="let Source = Excel.CurrentWorkbook(){[Name=""" & tableName & """]}[Content] in Source"',
+        '    formulaText = "let Source = Excel.CurrentWorkbook(){[Name=""" & tableName & """]}[Content]," & _',
+        '      " DepartmentColumn = Table.AddColumn(Source, ""Department"", each """ & Replace(department, """", """""") & """)," & _',
+        '      " MachineColumn = Table.AddColumn(DepartmentColumn, ""Machine"", each """ & Replace(machine, """", """""") & """)," & _',
+        '      " TimeframeColumn = Table.AddColumn(MachineColumn, ""Timeframe"", each """ & Replace(timeframe, """", """""") & """)," & _',
+        '      " UnitColumn = Table.AddColumn(TimeframeColumn, ""Unit"", each """ & Replace(unit, """", """""") & """)," & _',
+        '      " Ordered = Table.ReorderColumns(UnitColumn, {""Department"", ""Machine"", ""Timeframe"", ""Unit""} & Table.ColumnNames(Source))" & _',
+        '      " in Ordered"',
+        '    ThisWorkbook.Queries.Add Name:=queryName, Formula:=formulaText',
         '  End If',
         'End Sub',
         ''
